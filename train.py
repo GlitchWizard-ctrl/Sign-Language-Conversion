@@ -1,15 +1,14 @@
 # ============================================================
-# train.py — Lightweight ISL Training (SVM + HOG, no PyTorch)
+# train.py — MLP on hand landmarks (both hands)
 # ============================================================
 
 import os
 import numpy as np
 import pickle
-import cv2
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+from sklearn.metrics import classification_report
 
 # ============================================================
 # CONFIG
@@ -19,184 +18,203 @@ DATASET_PATH = os.path.join(BASE_PATH, "datasets")
 MODEL_PATH   = os.path.join(BASE_PATH, "models")
 os.makedirs(MODEL_PATH, exist_ok=True)
 
-# ============================================================
-# LOAD DATA
-# ============================================================
-print("\n" + "="*55)
-print("   ISL Sign Language — SVM + HOG Trainer")
-print("="*55)
+EPOCHS        = 200
+BATCH_SIZE    = 32
+LEARNING_RATE = 0.001
 
-print("\nLoading cleaned dataset...")
+# ============================================================
+# DEVICE
+# ============================================================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"\n{'='*55}")
+print(f"  ISL Landmark Trainer")
+print(f"{'='*55}")
+print(f"  Device : {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
+# ============================================================
+# LOAD
+# ============================================================
+print("\nLoading...")
 try:
-    X_train = np.load(os.path.join(DATASET_PATH, "X_train_images.npy"))
-    X_test  = np.load(os.path.join(DATASET_PATH, "X_test_images.npy"))
+    X_train = np.load(os.path.join(DATASET_PATH,
+                                    "X_train_landmarks.npy"))
+    X_test  = np.load(os.path.join(DATASET_PATH,
+                                    "X_test_landmarks.npy"))
     y_train = np.load(os.path.join(DATASET_PATH, "y_train.npy"))
     y_test  = np.load(os.path.join(DATASET_PATH, "y_test.npy"))
 except FileNotFoundError:
-    raise FileNotFoundError("Dataset not found. Run clean.py first.")
+    raise FileNotFoundError("Run record.py first.")
 
 with open(os.path.join(DATASET_PATH, "label_encoder.pkl"), "rb") as f:
     le = pickle.load(f)
 
-num_classes = len(le.classes_)
-print(f"  ✓ Train samples : {len(X_train)}")
-print(f"  ✓ Test  samples : {len(X_test)}")
-print(f"  ✓ Classes       : {num_classes}")
-print(f"  ✓ Class names   : {list(le.classes_)}")
+num_classes  = len(le.classes_)
+classes      = [str(c) for c in le.classes_]
+feature_size = X_train.shape[1]
+
+print(f"  Train        : {len(X_train)}")
+print(f"  Test         : {len(X_test)}")
+print(f"  Classes      : {num_classes} → {classes}")
+print(f"  Feature size : {feature_size}")
 
 # ============================================================
-# HOG FEATURE EXTRACTION
-# HOG captures edges and shape — ideal for hand signs
+# TENSORS
 # ============================================================
-def extract_hog_features(images, label=""):
-    """
-    Extracts HOG (Histogram of Oriented Gradients) features.
-    Input : (N, 224, 224, 3) float32 normalized images
-    Output: (N, feature_dim) float32 feature vectors
-    """
-    hog = cv2.HOGDescriptor(
-        _winSize   =(64, 64),
-        _blockSize =(16, 16),
-        _blockStride=(8,  8),
-        _cellSize  =(8,   8),
-        _nbins     =9
-    )
-
-    features = []
-    total    = len(images)
-
-    for i, img in enumerate(images):
-        # Convert normalized float → uint8
-        img_uint8 = (img * 255).astype(np.uint8)
-
-        # Resize to 64×64 for HOG (faster + consistent)
-        img_small = cv2.resize(img_uint8, (64, 64))
-
-        # Convert RGB → grayscale for HOG
-        img_gray  = cv2.cvtColor(img_small, cv2.COLOR_RGB2GRAY)
-
-        # Compute HOG features
-        feat = hog.compute(img_gray).flatten()
-        features.append(feat)
-
-        # Progress
-        if (i + 1) % 1000 == 0 or (i + 1) == total:
-            pct = (i + 1) / total * 100
-            print(f"  {label} [{i+1}/{total}] {pct:.1f}%")
-
-    return np.array(features, dtype=np.float32)
-
-
-print("\nExtracting HOG features from training set...")
-X_train_hog = extract_hog_features(X_train, label="Train")
-
-print("\nExtracting HOG features from test set...")
-X_test_hog  = extract_hog_features(X_test,  label="Test")
-
-print(f"\n  ✓ Feature vector size: {X_train_hog.shape[1]}")
+X_train_t = torch.tensor(X_train).float()
+X_test_t  = torch.tensor(X_test).float()
+y_train_t = torch.tensor(y_train).long()
+y_test_t  = torch.tensor(y_test).long()
 
 # ============================================================
-# SCALE FEATURES
-# SVM works best with normalized features
+# WEIGHTED SAMPLER
 # ============================================================
-print("\nScaling features...")
-scaler      = StandardScaler()
-X_train_hog = scaler.fit_transform(X_train_hog)
-X_test_hog  = scaler.transform(X_test_hog)
-print("  ✓ Features scaled")
-
-# ============================================================
-# TRAIN — SVM with RBF kernel
-# Best choice for HOG features on sign recognition
-# ============================================================
-print("\nTraining SVM classifier...")
-print("  (This may take 5–15 minutes depending on dataset size)")
-print("  ─────────────────────────────────────────────────────")
-
-svm_model = SVC(
-    kernel      = "rbf",
-    C           = 10,
-    gamma       = "scale",
-    probability = True,   # needed for confidence scores in pipeline
-    verbose     = True,
-    cache_size  = 2000    # use 2GB cache for faster training
+class_counts   = np.bincount(y_train.astype(int))
+class_weights  = 1.0 / np.maximum(class_counts, 1)
+sample_weights = class_weights[y_train.astype(int)]
+sampler        = WeightedRandomSampler(
+    weights     = torch.tensor(sample_weights).float(),
+    num_samples = len(sample_weights),
+    replacement = True
 )
 
-svm_model.fit(X_train_hog, y_train)
-print("\n  ✓ SVM training complete")
+train_ds     = TensorDataset(X_train_t, y_train_t)
+test_ds      = TensorDataset(X_test_t,  y_test_t)
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE,
+                          sampler=sampler, num_workers=0)
+test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE,
+                          shuffle=False, num_workers=0)
 
 # ============================================================
-# EVALUATE
+# MODEL
 # ============================================================
-print("\nEvaluating on test set...")
-y_pred = svm_model.predict(X_test_hog)
-acc    = accuracy_score(y_test, y_pred) * 100
+class LandmarkMLP(nn.Module):
+    def __init__(self, input_size, num_classes):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
 
-print(f"\n{'='*55}")
-print(f"  Test Accuracy : {acc:.2f}%")
-print(f"{'='*55}")
+            nn.Linear(256, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
 
-# Per-class breakdown
-print("\nPer-class Report:")
-print(classification_report(
-    y_test, y_pred,
-    target_names=[str(c) for c in le.classes_]
-))
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+
+            nn.Linear(64, num_classes)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+model = LandmarkMLP(feature_size, num_classes).to(device)
+total = sum(p.numel() for p in model.parameters()
+            if p.requires_grad)
+print(f"\n  ✓ MLP — {total:,} params")
 
 # ============================================================
-# ALSO TRAIN RANDOM FOREST (backup model)
-# Faster, good for real-time fallback
+# LOSS + OPTIMIZER + SCHEDULER
 # ============================================================
-print("\nTraining Random Forest (backup model)...")
-rf_model = RandomForestClassifier(
-    n_estimators = 200,
-    max_depth    = None,
-    n_jobs       = -1,    # use all CPU cores
-    random_state = 42,
-    verbose      = 1
+criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+optimizer = torch.optim.AdamW(model.parameters(),
+                               lr=LEARNING_RATE,
+                               weight_decay=1e-4)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=EPOCHS, eta_min=1e-5
 )
-rf_model.fit(X_train_hog, y_train)
-
-rf_pred = rf_model.predict(X_test_hog)
-rf_acc  = accuracy_score(y_test, rf_pred) * 100
-print(f"\n  ✓ Random Forest Accuracy: {rf_acc:.2f}%")
-
-# Pick best model
-if rf_acc > acc:
-    print(f"  ★ Random Forest is better ({rf_acc:.2f}% vs {acc:.2f}%)")
-    best_model      = rf_model
-    best_model_name = "RandomForest"
-else:
-    print(f"  ★ SVM is better ({acc:.2f}% vs {rf_acc:.2f}%)")
-    best_model      = svm_model
-    best_model_name = "SVM"
 
 # ============================================================
-# SAVE MODELS + SCALER
+# TRAINING LOOP
 # ============================================================
-print("\nSaving models...")
+print(f"\nTraining {EPOCHS} epochs...\n")
+print(f"  {'Ep':>5}  {'Loss':>8}  {'Train%':>7}  "
+      f"{'Val%':>7}  Note")
+print(f"  {'-'*45}")
 
-with open(os.path.join(MODEL_PATH, "sign_svm.pkl"), "wb") as f:
-    pickle.dump(svm_model, f)
-print("  ✓ SVM saved     → models/sign_svm.pkl")
+best_acc  = 0.0
+best_path = os.path.join(MODEL_PATH, "landmark_mlp.pth")
 
-with open(os.path.join(MODEL_PATH, "sign_rf.pkl"), "wb") as f:
-    pickle.dump(rf_model, f)
-print("  ✓ Random Forest → models/sign_rf.pkl")
+for epoch in range(1, EPOCHS + 1):
 
-with open(os.path.join(MODEL_PATH, "hog_scaler.pkl"), "wb") as f:
-    pickle.dump(scaler, f)
-print("  ✓ Scaler saved  → models/hog_scaler.pkl")
+    model.train()
+    t_loss = 0.0
+    t_corr = 0
+    t_tot  = 0
 
-# Save best model separately for pipeline
-with open(os.path.join(MODEL_PATH, "best_model.pkl"), "wb") as f:
-    pickle.dump({"model": best_model, "name": best_model_name}, f)
-print(f"  ✓ Best model    → models/best_model.pkl ({best_model_name})")
+    for X, y in train_loader:
+        X, y = X.to(device), y.to(device)
+        optimizer.zero_grad()
+        out  = model(X)
+        loss = criterion(out, y)
+        loss.backward()
+        optimizer.step()
+        t_loss += loss.item()
+        t_corr += (out.argmax(1) == y).sum().item()
+        t_tot  += y.size(0)
+
+    train_acc = t_corr / t_tot * 100
+
+    model.eval()
+    v_corr    = 0
+    v_tot     = 0
+    all_preds = []
+    all_true  = []
+
+    with torch.no_grad():
+        for X, y in test_loader:
+            X, y  = X.to(device), y.to(device)
+            out   = model(X)
+            preds = out.argmax(1)
+            v_corr += (preds == y).sum().item()
+            v_tot  += y.size(0)
+            all_preds.extend(preds.cpu().numpy())
+            all_true.extend(y.cpu().numpy())
+
+    val_acc = v_corr / v_tot * 100
+    scheduler.step()
+
+    note = ""
+    if val_acc > best_acc:
+        best_acc = val_acc
+        torch.save({
+            "model_state" : model.state_dict(),
+            "num_classes" : num_classes,
+            "feature_size": feature_size,
+            "le"          : le
+        }, best_path)
+        note = f"★ best {val_acc:.2f}%"
+
+    if epoch % 20 == 0 or epoch == 1 or note:
+        print(f"  {epoch:>5}  "
+              f"{t_loss/len(train_loader):>8.4f}  "
+              f"{train_acc:>7.2f}  {val_acc:>7.2f}  {note}")
 
 print(f"\n{'='*55}")
-print(f"  Training complete!")
-print(f"  SVM Accuracy          : {acc:.2f}%")
-print(f"  Random Forest Accuracy: {rf_acc:.2f}%")
-print(f"  Best model            : {best_model_name}")
+print(f"  Best accuracy : {best_acc:.2f}%")
+print(f"  Model saved   : models/landmark_mlp.pth")
 print(f"{'='*55}\n")
+
+# Final report
+ckpt = torch.load(best_path, map_location=device,
+                  weights_only=False)
+model.load_state_dict(ckpt["model_state"])
+model.eval()
+all_preds, all_true = [], []
+with torch.no_grad():
+    for X, y in test_loader:
+        out = model(X.to(device))
+        all_preds.extend(out.argmax(1).cpu().numpy())
+        all_true.extend(y.numpy())
+print(classification_report(all_true, all_preds,
+                             target_names=classes,
+                             zero_division=0))
