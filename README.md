@@ -1,48 +1,58 @@
-Real-Time Sign Language to Audio Inter-Conversion
-Overview
+# ISL Sign Recognition Platform — Setup
 
-This project is an AI-based system that helps convert sign language into text and speech in real time. It aims to reduce the communication gap between hearing and non-hearing individuals by using computer vision, deep learning, and speech technologies.
+## Correct folder structure (already set up in this zip)
+```
+isl-project/
+├── app.py
+├── requirements.txt
+└── static/
+    ├── index.html
+    ├── login.html
+    ├── app.js
+    ├── login.js
+    └── style.css
+```
+Flask is configured to serve everything from `static/`, so the frontend
+files MUST live in that subfolder — that was the main reason things
+weren't loading before.
 
-The system captures hand gestures using a webcam, recognizes the signs, converts them into text, and then generates audio output. It can also support text or speech input for reverse communication.
+## Run it in VS Code
 
-Features
-Real-time hand gesture recognition
-Sign-to-text conversion
-Text-to-speech output
-Speech-to-text input
-Text-to-sign conversion
-Basic multilingual support
-Technologies Used
-Python
-OpenCV
-TensorFlow / Keras
-CNN / MobileNet
-MediaPipe
-Flask
-gTTS / pyttsx3
-SpeechRecognition
-Google Translate API
-Dataset
+1. Open the `isl-project` folder in VS Code.
+2. Open a terminal and create a virtual environment (recommended):
+   ```
+   python -m venv venv
+   venv\Scripts\activate        # Windows
+   source venv/bin/activate     # macOS/Linux
+   ```
+3. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+4. Run the server:
+   ```
+   python app.py
+   ```
+5. Open your browser at: http://127.0.0.1:5000
+   (It will redirect you to the login page automatically.)
 
-Indian Sign Language (ISL) Dataset from Kaggle
+## Login credentials (mock auth)
+- Username: `admin`
+- Password: `password`
 
-https://www.kaggle.com/datasets/ananyaarya22/isl-data
+These are hardcoded in `app.py` (`api_login` route) — change them there
+if you want different credentials.
 
-Project Workflow
-Collect and preprocess ISL dataset
-Train gesture recognition model
-Implement real-time webcam detection
-Convert signs into text
-Generate speech output using TTS
-Build UI and integrate all modules
-Team Members
-Pavitra K
-Nisarga S
-Prarthana Nagaraj
+## What was fixed
+- `styles.css` → `style.css` typo in both `index.html` and `login.html`
+  (this was the reason the dashboard had no visual styling).
+- Moved all frontend files into a `static/` subfolder, since `app.py`
+  is configured to serve static assets from there.
+- Added this `requirements.txt` (flask, torch, numpy, scikit-learn).
 
-Guide:
-Dr. Andhe Pallavi
-
-Conclusion
-
-This project improves accessibility and promotes inclusive communication by enabling real-time sign language translation using AI and deep learning.
+## Note on auth
+The `Authorization` header sent by the frontend (`login.js`/`app.js`)
+is currently not validated by any `/api/...` route in `app.py` — only
+`/api/login` checks credentials. This is fine for local testing/demo,
+but if you deploy this anywhere, you'll want to add real token
+verification in the backend before trusting that header.
