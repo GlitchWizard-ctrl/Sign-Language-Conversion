@@ -43,12 +43,6 @@ weren't loading before.
 These are hardcoded in `app.py` (`api_login` route) — change them there
 if you want different credentials.
 
-## What was fixed
-- `styles.css` → `style.css` typo in both `index.html` and `login.html`
-  (this was the reason the dashboard had no visual styling).
-- Moved all frontend files into a `static/` subfolder, since `app.py`
-  is configured to serve static assets from there.
-- Added this `requirements.txt` (flask, torch, numpy, scikit-learn).
 
 ## Note on auth
 The `Authorization` header sent by the frontend (`login.js`/`app.js`)
