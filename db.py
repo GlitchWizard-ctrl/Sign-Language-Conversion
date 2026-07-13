@@ -1,15 +1,11 @@
 """
 db.py — SQLite data access layer for the ISL Sign Recognition Platform.
 
-Replaces the old pickle-file storage (raw_data.pkl, label_encoder.pkl) with
-a proper relational database. Uses Python's built-in sqlite3 module, so no
-extra database server or driver install is required.
-
 Tables:
-    users        - login credentials (hashed passwords)
-    sessions     - active login tokens (issued on successful /api/login)
+    users        - login credentials (hashed passwords, email, full name)
+    sessions     - active login tokens
     samples      - recorded hand-landmark training samples
-    model_runs   - metadata for each trained model (classes, accuracy, weights path)
+    model_runs   - metadata for each trained model
 """
 
 import os
@@ -38,13 +34,16 @@ def get_connection():
 
 
 def init_db():
-    """Create tables if they don't exist, and seed a default admin user."""
+    """Create all tables and seed a default admin user on first run."""
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                fullname      TEXT NOT NULL DEFAULT '',
+                email         TEXT UNIQUE NOT NULL DEFAULT '',
                 username      TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'user',
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -77,28 +76,60 @@ def init_db():
             );
         """)
 
-        # Seed a default admin user the first time the DB is created
+        # Seed default admin user only if users table is empty
         row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
         if row["c"] == 0:
             conn.execute(
-                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                ("admin", generate_password_hash("password"))
+                """INSERT INTO users (fullname, email, username, password_hash, role)
+                   VALUES (?, ?, ?, ?, ?)""",
+                ("Administrator", "admin@isl.local", "admin",
+                 generate_password_hash("password"), "admin")
             )
 
 
-# ----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # USERS / AUTH
-# ----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+
+def register_user(fullname, email, username, password):
+    """
+    Register a new user. Returns (True, None) on success or
+    (False, error_message) if the username or email already exists.
+    """
+    with get_connection() as conn:
+        # Check for duplicate username
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            return False, "Username already taken. Please choose another."
+        # Check for duplicate email
+        if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            return False, "An account with this email already exists."
+
+        conn.execute(
+            """INSERT INTO users (fullname, email, username, password_hash, role)
+               VALUES (?, ?, ?, ?, 'user')""",
+            (fullname, email, username, generate_password_hash(password))
+        )
+        return True, None
+
 
 def verify_user(username, password):
-    """Check username/password against the users table."""
+    """Return True if username + password are correct."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT password_hash FROM users WHERE username = ?", (username,)
         ).fetchone()
-        if row and check_password_hash(row["password_hash"], password):
-            return True
-        return False
+        return bool(row and check_password_hash(row["password_hash"], password))
+
+
+def get_user_info(username):
+    """Return basic user info dict or None."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT fullname, email, role FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if row:
+            return {"fullname": row["fullname"], "email": row["email"], "role": row["role"]}
+        return None
 
 
 def create_session(username):
@@ -113,14 +144,14 @@ def create_session(username):
 
 
 def verify_session(token):
-    """Return True if the given token corresponds to an active session."""
+    """Return the username if the session token is valid, else None."""
     if not token:
-        return False
+        return None
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT 1 FROM sessions WHERE token = ?", (token,)
+            "SELECT username FROM sessions WHERE token = ?", (token,)
         ).fetchone()
-        return row is not None
+        return row["username"] if row else None
 
 
 def delete_session(token):
@@ -128,9 +159,9 @@ def delete_session(token):
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
 
-# ----------------------------------------------------------------------
-# SAMPLES (replaces raw_data.pkl)
-# ----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# SAMPLES
+# -----------------------------------------------------------------------
 
 def insert_sample(sign_label, features):
     with get_connection() as conn:
@@ -141,15 +172,9 @@ def insert_sample(sign_label, features):
 
 
 def get_all_samples():
-    """Returns list of {'label': str, 'features': [126 floats]}."""
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT sign_label, features FROM samples"
-        ).fetchall()
-        return [
-            {"label": r["sign_label"], "features": json.loads(r["features"])}
-            for r in rows
-        ]
+        rows = conn.execute("SELECT sign_label, features FROM samples").fetchall()
+        return [{"label": r["sign_label"], "features": json.loads(r["features"])} for r in rows]
 
 
 def count_samples():
@@ -157,19 +182,12 @@ def count_samples():
         return conn.execute("SELECT COUNT(*) AS c FROM samples").fetchone()["c"]
 
 
-def clear_samples():
-    """Optional utility: wipe all recorded samples."""
-    with get_connection() as conn:
-        conn.execute("DELETE FROM samples")
-
-
-# ----------------------------------------------------------------------
-# MODEL RUNS (replaces label_encoder.pkl + implicit "latest model" logic)
-# ----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# MODEL RUNS
+# -----------------------------------------------------------------------
 
 def save_model_run(epochs, batch_size, lr, best_accuracy, final_loss,
-                    feature_size, classes, weights_path):
-    """Store metadata for a freshly trained model and mark it active."""
+                   feature_size, classes, weights_path):
     with get_connection() as conn:
         conn.execute("UPDATE model_runs SET is_active = 0")
         conn.execute("""
@@ -177,14 +195,11 @@ def save_model_run(epochs, batch_size, lr, best_accuracy, final_loss,
                 (epochs, batch_size, learning_rate, best_accuracy, final_loss,
                  feature_size, classes, weights_path, is_active)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        """, (
-            epochs, batch_size, lr, best_accuracy, final_loss,
-            feature_size, json.dumps(classes), weights_path
-        ))
+        """, (epochs, batch_size, lr, best_accuracy, final_loss,
+              feature_size, json.dumps(classes), weights_path))
 
 
 def get_active_model_run():
-    """Returns metadata dict for the most recently trained (active) model, or None."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM model_runs WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
