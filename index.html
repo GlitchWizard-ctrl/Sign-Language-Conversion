@@ -3,14 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISL Sign Recognition — Control Dashboard</title>
-    <!-- Google Fonts -->
+    <title>ISL Sign Recognition — Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Core Styles -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,28 +20,25 @@
                 </div>
                 <div>
                     <h1>ISL Sign Platform</h1>
-                    <span style="font-size: 11px; color: var(--text-muted); letter-spacing: 0.05em; text-transform: uppercase;">Both Hands Landmark Classifier</span>
+                    <span style="font-size: 11px; color: var(--text-muted); letter-spacing: 0.05em; text-transform: uppercase;">Real-Time Sign Language Interpreter</span>
                 </div>
             </div>
 
             <!-- Tab Buttons -->
             <nav class="tab-navigation">
-                <button class="nav-tab active" data-tab="recordTab">
-                    <i class="fa-solid fa-circle-dot"></i> Record Data
+                <button class="nav-tab active" data-tab="signToAudioTab">
+                    <i class="fa-solid fa-hand-sparkles"></i> Sign → Audio
                 </button>
-                <button class="nav-tab" data-tab="trainTab">
-                    <i class="fa-solid fa-gears"></i> Model Training
-                </button>
-                <button class="nav-tab" data-tab="predictTab">
-                    <i class="fa-solid fa-eye"></i> Real-time Predict
+                <button class="nav-tab" data-tab="audioToSignTab">
+                    <i class="fa-solid fa-microphone-lines"></i> Audio → Sign
                 </button>
             </nav>
 
             <!-- User Info and Logout -->
             <div class="user-profile">
                 <div class="user-info">
-                    <p class="user-name" id="userNameLabel">Admin User</p>
-                    <p class="user-role">System Operator</p>
+                    <p class="user-name" id="userNameLabel">User</p>
+                    <p class="user-role" id="userRoleLabel">Member</p>
                 </div>
                 <button id="logoutBtn" class="logout-btn">
                     <i class="fa-solid fa-right-from-bracket"></i> Logout
@@ -56,236 +50,194 @@
         <main class="dashboard-content">
 
             <!-- ==========================================
-                 1. RECORD DATA TAB
+                 TAB 1: SIGN LANGUAGE → AUDIO
                  ========================================== -->
-            <section id="recordTab" class="tab-panel active">
+            <section id="signToAudioTab" class="tab-panel active">
                 <div class="layout-split">
-                    <!-- Left: Camera Viewer -->
+                    <!-- Left: Camera Feed -->
                     <div class="glass-panel card-content">
                         <div class="panel-header">
-                            <h3>Webcam Feed</h3>
+                            <h3>Sign Language Camera</h3>
                             <div class="hands-detector">
-                                <span id="recordLeftBadge" class="hand-badge">L hand</span>
-                                <span id="recordRightBadge" class="hand-badge">R hand</span>
+                                <span id="s2aLeftBadge" class="hand-badge">L hand</span>
+                                <span id="s2aRightBadge" class="hand-badge">R hand</span>
                             </div>
                         </div>
                         <div class="panel-body">
                             <div class="camera-container">
-                                <video id="recordVideo" class="webcam-video" autoplay playsinline></video>
-                                <canvas id="recordCanvas" class="webcam-canvas"></canvas>
-                                <div class="flash-effect" id="recordFlash"></div>
+                                <video id="s2aVideo" class="webcam-video" autoplay playsinline></video>
+                                <canvas id="s2aCanvas" class="webcam-canvas"></canvas>
                                 <div class="screen-overlay">
-                                    <div class="warning-overlay" id="recordNoHandWarning">SHOW YOUR HAND</div>
+                                    <div class="warning-overlay" id="s2aNoHandWarning">SHOW YOUR HAND</div>
+                                    <div class="prediction-overlay" id="s2aResultOverlay" style="display:none;">
+                                        <span class="prediction-label" id="s2aSignVal">—</span>
+                                        <span class="prediction-confidence" id="s2aConfVal">0%</span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="camera-controls">
-                                <button id="startRecordCamBtn" class="btn-primary">
+                                <button id="s2aStartBtn" class="btn-primary">
                                     <i class="fa-solid fa-video"></i> Start Camera
                                 </button>
-                                <button id="captureBtn" class="btn-secondary btn-disabled" disabled>
-                                    <i class="fa-solid fa-camera"></i> Capture Sample (SPACE)
+                                <button id="s2aStopBtn" class="btn-danger btn-disabled" disabled>
+                                    <i class="fa-solid fa-video-slash"></i> Stop
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right: Recording Configurations -->
+                    <!-- Right: Audio Output & Transcript -->
                     <div class="glass-panel card-content">
                         <div class="panel-header">
-                            <h3>Data Recorder Settings</h3>
-                        </div>
-                        <div class="panel-body">
-                            <div class="control-grid">
-                                <div class="control-item">
-                                    <label for="recordSignSelect">Target Sign Label</label>
-                                    <select id="recordSignSelect" class="select-input">
-                                        <option value="1">Sign 1</option>
-                                        <option value="2">Sign 2</option>
-                                        <option value="3">Sign 3</option>
-                                        <option value="4">Sign 4</option>
-                                        <option value="5">Sign 5</option>
-                                        <option value="6">Sign 6</option>
-                                        <option value="7">Sign 7</option>
-                                        <option value="8">Sign 8</option>
-                                        <option value="9">Sign 9</option>
-                                        <option value="10">Sign 10</option>
-                                    </select>
-                                </div>
-
-                                <div class="control-item" style="margin-top: 10px;">
-                                    <label>Capture Progress (<span id="capturedCount">0</span>/<span id="totalRequiredCount">2</span>)</label>
-                                    <div class="sample-dots" id="sampleDotsContainer">
-                                        <!-- Dots will be populated dynamically -->
-                                    </div>
-                                </div>
-
-                                <div class="control-item" style="margin-top: 10px;">
-                                    <button id="skipSignBtn" class="btn-secondary">
-                                        <i class="fa-solid fa-angles-right"></i> Skip Sign (N)
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="stats-grid">
-                                <div class="stat-card">
-                                    <div class="stat-value" id="statRawSamples">0</div>
-                                    <div class="stat-label">Raw Samples</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" id="statAugmentedSamples">0</div>
-                                    <div class="stat-label">Total (Augmented)</div>
-                                </div>
-                            </div>
-
-                            <div class="shortcuts-panel">
-                                <p><strong>Keyboard Shortcuts:</strong></p>
-                                <ul>
-                                    <li><span>Capture Sample</span> <kbd class="key-cap">SPACE</kbd></li>
-                                    <li><span>Skip Sign</span> <kbd class="key-cap">N</kbd></li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ==========================================
-                 2. MODEL TRAINING TAB
-                 ========================================== -->
-            <section id="trainTab" class="tab-panel">
-                <div class="layout-split">
-                    <!-- Left: Real-time Stats & Training Trigger -->
-                    <div class="glass-panel card-content">
-                        <div class="panel-header">
-                            <h3>Training Configuration</h3>
-                        </div>
-                        <div class="panel-body">
-                            <div class="control-grid">
-                                <div class="control-item">
-                                    <label for="trainEpochs">Epochs</label>
-                                    <input type="number" id="trainEpochs" class="text-input" value="200" min="10" max="1000">
-                                </div>
-                                <div class="control-item">
-                                    <label for="trainBatchSize">Batch Size</label>
-                                    <input type="number" id="trainBatchSize" class="text-input" value="32" min="8" max="256">
-                                </div>
-                                <div class="control-item">
-                                    <label for="trainLR">Learning Rate</label>
-                                    <input type="text" id="trainLR" class="text-input" value="0.001">
-                                </div>
-                                <button id="startTrainBtn" class="btn-primary" style="margin-top: 10px;">
-                                    <i class="fa-solid fa-play"></i> Start Model Training
-                                </button>
-                            </div>
-
-                            <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 24px 0;">
-
-                            <div class="progress-container">
-                                <div class="progress-header">
-                                    <span id="trainStatusLabel">Idle</span>
-                                    <span id="trainProgressPercent">0%</span>
-                                </div>
-                                <div class="progress-bar">
-                                    <div id="trainProgressBarFill" class="progress-bar-fill"></div>
-                                </div>
-                            </div>
-
-                            <div class="stats-grid">
-                                <div class="stat-card">
-                                    <div class="stat-value" id="statTrainLoss">0.0000</div>
-                                    <div class="stat-label">Training Loss</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" id="statValAcc">0.00%</div>
-                                    <div class="stat-label">Best Val Accuracy</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Right: Console Log Output -->
-                    <div class="glass-panel card-content">
-                        <div class="panel-header">
-                            <h3>Training Console Logs</h3>
-                            <button id="clearLogsBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 12px;">
+                            <h3>Audio Output</h3>
+                            <button id="s2aClearBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 12px;">
                                 <i class="fa-solid fa-eraser"></i> Clear
                             </button>
                         </div>
                         <div class="panel-body">
-                            <pre id="trainConsole" class="console-output">Waiting to start training...</pre>
+                            <!-- Model Status -->
+                            <div class="control-item" style="margin-bottom: 20px;">
+                                <label>Model Status</label>
+                                <div style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:14px; margin-top: 6px;">
+                                    <i class="fa-solid fa-circle" id="s2aModelStatusDot" style="color: var(--error);"></i>
+                                    <span id="s2aModelStatusText">Checking model...</span>
+                                </div>
+                            </div>
+
+                            <!-- TTS Controls -->
+                            <div class="control-item" style="margin-bottom: 20px;">
+                                <label>Voice Settings</label>
+                                <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                                    <select id="s2aVoiceSelect" class="select-input" style="flex:1; min-width:140px;">
+                                        <option value="">Default Voice</option>
+                                    </select>
+                                    <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:120px;">
+                                        <label style="font-size:12px; color:var(--text-muted); text-transform:none; letter-spacing:0; margin:0;">Speed</label>
+                                        <input type="range" id="s2aSpeedSlider" min="0.5" max="2" step="0.1" value="1" style="flex:1;">
+                                        <span id="s2aSpeedVal" style="font-size:12px; color:var(--text-main); width:28px;">1x</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="control-item" style="margin-bottom: 20px;">
+                                <label style="display:flex; align-items:center; gap:10px;">
+                                    <input type="checkbox" id="s2aAutoSpeak" checked style="width:16px; height:16px; accent-color: var(--primary);">
+                                    Auto-speak detected signs
+                                </label>
+                            </div>
+
+                            <hr style="border:0; border-top:1px solid var(--border-color); margin: 16px 0;">
+
+                            <!-- Live current sign -->
+                            <div class="current-sign-display" id="s2aCurrentSignBox">
+                                <div class="current-sign-icon"><i class="fa-solid fa-hand-peace"></i></div>
+                                <div class="current-sign-text" id="s2aCurrentSignText">Waiting for sign...</div>
+                                <div class="current-sign-conf" id="s2aCurrentSignConf"></div>
+                            </div>
+
+                            <!-- Speak button for manual trigger -->
+                            <button id="s2aSpeakBtn" class="btn-primary" style="width:100%; margin-top:16px;" disabled>
+                                <i class="fa-solid fa-volume-high"></i> Speak Detected Sign
+                            </button>
+
+                            <hr style="border:0; border-top:1px solid var(--border-color); margin: 20px 0;">
+
+                            <!-- Transcript log -->
+                            <label class="control-item" style="margin-bottom:8px; display:block;">
+                                <span style="font-size:13px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Session Transcript</span>
+                            </label>
+                            <div class="transcript-box" id="s2aTranscript">
+                                <span style="color: var(--text-muted); font-size:13px;">Signs spoken will appear here...</span>
+                            </div>
                         </div>
                     </div>
                 </div>
             </section>
 
             <!-- ==========================================
-                 3. REAL-TIME PREDICT TAB
+                 TAB 2: AUDIO → SIGN LANGUAGE
                  ========================================== -->
-            <section id="predictTab" class="tab-panel">
+            <section id="audioToSignTab" class="tab-panel">
                 <div class="layout-split">
-                    <!-- Left: Prediction Feed -->
+                    <!-- Left: Microphone Input -->
                     <div class="glass-panel card-content">
                         <div class="panel-header">
-                            <h3>Inference Webcam</h3>
-                            <div class="hands-detector">
-                                <span id="predictLeftBadge" class="hand-badge">L hand</span>
-                                <span id="predictRightBadge" class="hand-badge">R hand</span>
+                            <h3>Voice / Audio Input</h3>
+                            <div id="a2sMicStatus" class="mic-status-badge">
+                                <i class="fa-solid fa-microphone-slash"></i> Mic Off
                             </div>
                         </div>
                         <div class="panel-body">
-                            <div class="camera-container">
-                                <video id="predictVideo" class="webcam-video" autoplay playsinline></video>
-                                <canvas id="predictCanvas" class="webcam-canvas"></canvas>
-                                <div class="screen-overlay">
-                                    <div class="warning-overlay" id="predictNoHandWarning">SHOW YOUR HAND</div>
-                                    
-                                    <!-- Dynamic prediction text popup -->
-                                    <div class="prediction-overlay" id="predictionResultOverlay" style="display: none;">
-                                        <span class="prediction-label" id="predictedSignVal">—</span>
-                                        <span class="prediction-confidence" id="predictedConfidenceVal">0%</span>
-                                    </div>
+                            <!-- Animated mic visualizer -->
+                            <div class="mic-visualizer" id="a2sVisualizer">
+                                <div class="mic-icon-wrap" id="a2sMicIconWrap">
+                                    <i class="fa-solid fa-microphone" id="a2sMicIcon"></i>
                                 </div>
+                                <div class="mic-rings">
+                                    <div class="mic-ring ring-1"></div>
+                                    <div class="mic-ring ring-2"></div>
+                                    <div class="mic-ring ring-3"></div>
+                                </div>
+                                <p class="mic-hint" id="a2sMicHint">Press "Start Listening" and speak clearly</p>
                             </div>
-                            <div class="camera-controls">
-                                <button id="startPredictCamBtn" class="btn-primary">
-                                    <i class="fa-solid fa-video"></i> Start Predictions
+
+                            <!-- Interim / live recognition text -->
+                            <div class="interim-box" id="a2sInterimBox">
+                                <span id="a2sInterimText" style="color: var(--text-muted); font-style: italic;">Your speech will appear here in real-time...</span>
+                            </div>
+
+                            <div class="camera-controls" style="margin-top:16px;">
+                                <button id="a2sStartBtn" class="btn-primary">
+                                    <i class="fa-solid fa-microphone"></i> Start Listening
                                 </button>
-                                <button id="stopPredictCamBtn" class="btn-danger btn-disabled" disabled>
-                                    <i class="fa-solid fa-video-slash"></i> Stop Camera
+                                <button id="a2sStopBtn" class="btn-danger btn-disabled" disabled>
+                                    <i class="fa-solid fa-microphone-slash"></i> Stop
                                 </button>
+                            </div>
+
+                            <!-- Language selector -->
+                            <div class="control-item" style="margin-top: 20px;">
+                                <label>Speech Language</label>
+                                <select id="a2sLangSelect" class="select-input" style="margin-top:8px;">
+                                    <option value="en-IN">English (India)</option>
+                                    <option value="en-US">English (US)</option>
+                                    <option value="en-GB">English (UK)</option>
+                                    <option value="hi-IN">Hindi</option>
+                                </select>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right: Prediction History & Metadata -->
+                    <!-- Right: Sign Output Display -->
                     <div class="glass-panel card-content">
                         <div class="panel-header">
-                            <h3>Live Inference Stats</h3>
+                            <h3>Sign Language Output</h3>
+                            <button id="a2sClearBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 12px;">
+                                <i class="fa-solid fa-eraser"></i> Clear
+                            </button>
                         </div>
                         <div class="panel-body">
-                            <div class="control-grid">
-                                <div class="control-item">
-                                    <label>Inference Model Status</label>
-                                    <div id="modelStatusIndicator" style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px;">
-                                        <i class="fa-solid fa-circle" id="modelStatusColor" style="color: var(--error);"></i>
-                                        <span id="modelStatusText">Loading status...</span>
-                                    </div>
+                            <!-- Word-by-word sign breakdown -->
+                            <div class="sign-output-box" id="a2sSignOutput">
+                                <div class="sign-output-placeholder">
+                                    <i class="fa-solid fa-hand-sparkles" style="font-size:32px; color:var(--primary); margin-bottom:12px;"></i>
+                                    <p>Speak something and the ISL signs<br>will appear here word by word</p>
                                 </div>
                             </div>
 
-                            <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 24px 0;">
+                            <hr style="border:0; border-top:1px solid var(--border-color); margin: 20px 0;">
 
-                            <div class="panel-header" style="margin-bottom: 12px; border: none; padding-bottom: 0;">
-                                <h3>Prediction Distribution</h3>
+                            <!-- Full spoken sentence log -->
+                            <label style="font-size:13px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:8px;">
+                                Recognized Speech
+                            </label>
+                            <div class="transcript-box" id="a2sTranscript">
+                                <span style="color: var(--text-muted); font-size:13px;">Recognized sentences will appear here...</span>
                             </div>
-                            
-                            <div class="chart-container">
-                                <div class="chart-bars" id="predictDistributionBars">
-                                    <!-- Dynamic bar elements for classes will go here -->
-                                    <div style="width: 100%; text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 50px;">
-                                        Start predicting to display probability bars
-                                    </div>
-                                </div>
+
+                            <div class="info-banner" style="margin-top:16px;">
+                                <i class="fa-solid fa-circle-info"></i>
+                                Each word is mapped to its ISL sign equivalent. Common words use standardized ISL gestures.
                             </div>
                         </div>
                     </div>
@@ -298,11 +250,11 @@
     <!-- Notification Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <!-- MediaPipe Hands & Camera CDNs -->
+    <!-- MediaPipe CDNs -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <!-- Main Client Script -->
+    <!-- Main App Script -->
     <script src="app.js"></script>
 </body>
 </html>
