@@ -1,5 +1,0 @@
-flask
-werkzeug
-torch
-numpy
-scikit-learn

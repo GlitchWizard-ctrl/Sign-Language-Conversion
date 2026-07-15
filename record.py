@@ -16,8 +16,22 @@ from collections import Counter
 # CONFIG
 # ============================================================
 SIGNS_TO_RECORD    = [
-    "1", "2", "3", "4", "5",
-    "6", "7", "8", "9", "10"
+    "hello", "hi", "good_morning", "good_afternoon", "good_evening",
+    "goodbye", "thank_you", "please", "sorry", "welcome",
+
+    "how_are_you", "what_are_you_doing", "where_are_you_going",
+    "what_is_your_name", "how_old_are_you", "can_you_help_me",
+    "do_you_understand", "are_you_okay", "what_happened", "why",
+
+    "eat", "drink", "sleep", "study", "work",
+    "come", "go", "sit", "stand", "walk",
+
+    "yes", "no", "water", "food", "medicine",
+    "hospital", "home", "school", "friend", "family",
+
+    "i_need_help", "call_the_doctor", "call_the_police",
+    "i_am_fine", "i_am_hungry", "i_am_thirsty",
+    "nice_to_meet_you", "see_you_later", "take_care", "i_love_you"
 ]
 SAMPLES_PER_SIGN   = 2
 AUGMENT_PER_SAMPLE = 99   # 2 × 100 = 200 per class
