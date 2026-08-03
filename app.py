@@ -89,11 +89,15 @@ def load_cached_model():
     global model_cache
     with model_lock:
         run = db.get_active_model_run()
-        if not run or not os.path.exists(run["weights_path"]):
+        if not run:
+            model_cache["loaded"] = False
+            return False
+        weights_path = os.path.join(MODEL_PATH, run["weights_path"])   # rebuild path fresh
+        if not os.path.exists(weights_path):
             model_cache["loaded"] = False
             return False
         try:
-            ckpt  = torch.load(run["weights_path"], map_location=device, weights_only=False)
+            ckpt = torch.load(weights_path, map_location=device, weights_only=False)
             model = LandmarkMLP(run["feature_size"], len(run["classes"])).to(device)
             model.load_state_dict(ckpt["model_state"])
             model.eval()
@@ -596,7 +600,7 @@ def training_worker(samples, epochs, batch_size, lr_rate):
         log("=" * 45)
 
         db.save_model_run(epochs, batch_size, lr_rate, best_acc, final_loss,
-                          feature_size, classes, best_path)
+                          feature_size, classes, weights_name)
         load_cached_model()
 
     except Exception as e:
