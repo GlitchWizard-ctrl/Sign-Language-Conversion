@@ -565,11 +565,14 @@ def training_worker(samples, epochs, batch_size, lr_rate):
 # RUN
 # ============================================================
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    debug_mode = os.environ.get("DEBUG", "false").lower() in ("true", "1")
+
     print("\n" + "=" * 55)
     print("  ISL Sign Platform  (SQL backend)")
     print("=" * 55)
-    print(f"  URL      : http://localhost:5000")
+    print(f"  URL      : http://0.0.0.0:{port}")
     print(f"  Device   : {device.type.upper()}")
     print(f"  Database : {db.DB_PATH}")
     print("=" * 55 + "\n")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=port, debug=debug_mode)
