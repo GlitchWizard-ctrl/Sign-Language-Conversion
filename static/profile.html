@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Profile - SignCast</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon"><i class="fa-solid fa-hands-asl-interpreting"></i></div>
+        <div><h1>Profile</h1><p>Edit your account details.</p></div>
+      </div>
+      <div class="top-actions">
+        <button id="backBtn" class="btn-secondary">Back</button>
+      </div>
+    </header>
+    <main class="dashboard-content">
+      <section class="glass-panel call-card">
+        <div class="panel-body">
+          <label>Full name</label>
+          <input id="fullname" class="text-input" />
+          <label>Email</label>
+          <input id="email" class="text-input" />
+          <label>New password (leave blank to keep)</label>
+          <input id="password" class="text-input" type="password" />
+          <div style="margin-top:12px; display:flex; gap:10px;">
+            <button id="saveBtn" class="btn-primary">Save</button>
+            <button id="cancelBtn" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast-container" id="toastContainer"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="profile.js"></script>
+</body>
+</html>

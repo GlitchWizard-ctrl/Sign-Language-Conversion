@@ -19,16 +19,25 @@
                 </div>
                 <div>
                     <h1>SignCast Live</h1>
-                    <p>Live call, sign conversion, interpreter mode.</p>
+                    <p>Live call, sign conversion.</p>
                 </div>
             </div>
             <div class="top-actions">
-                <div class="user-pill">
-                    <i class="fa-solid fa-user"></i>
-                    <span id="usernameLabel">Guest</span>
-                    <span id="userRoleLabel" class="user-role">USER</span>
+                <div class="user-dropdown" id="userDropdown">
+                    <button class="user-pill" id="userPillBtn">
+                        <i class="fa-solid fa-user"></i>
+                        <span id="usernameLabel">Guest</span>
+                        <span id="userRoleLabel" class="user-role">USER</span>
+                        <i class="fa-solid fa-caret-down dropdown-caret"></i>
+                    </button>
+                    <div class="dropdown-menu" id="userMenu" aria-hidden="true">
+                        <a href="profile.html" class="dropdown-item">Profile</a>
+                        <a href="#" id="openHistory" class="dropdown-item">Call history</a>
+                        <a href="settings.html" class="dropdown-item">Settings</a>
+                        <div class="dropdown-divider"></div>
+                        <button id="signOutBtn" class="dropdown-item logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</button>
+                    </div>
                 </div>
-                <button id="signOutBtn" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</button>
             </div>
             <div id="adminBanner" class="admin-banner" style="display:none;">
                 <i class="fa-solid fa-shield-halved"></i> Admin supervisor mode enabled.
@@ -53,20 +62,14 @@
                             </div>
                             <div class="control-item">
                                 <label>&nbsp;</label>
-                                <button id="generateRoomBtn" class="btn-secondary">Generate</button>
+                                <div style="display:flex; gap:8px;">
+                                  <button id="startRoomBtn" class="btn-primary">Start Call</button>
+                                  <button id="joinRoomBtn" class="btn-secondary">Join Call</button>
+                                </div>
                             </div>
-                        </div>
-
-                        <div class="call-actions-two">
-                            <button id="startRoomBtn" class="btn-primary">Create Room</button>
-                            <button id="joinRoomBtn" class="btn-secondary">Join Room</button>
                         </div>
 
                         <div class="toggle-grid">
-                            <div class="switch-block">
-                                <span>Interpreter mode</span>
-                                <label class="switch"><input type="checkbox" id="interpreterSwitch" /><span class="slider"></span></label>
-                            </div>
                             <div class="switch-block">
                                 <span>Live converter</span>
                                 <label class="switch"><input type="checkbox" id="converterSwitch" checked /><span class="slider"></span></label>
@@ -79,16 +82,12 @@
                                 <p id="activeRoomLabel">None</p>
                             </div>
                             <div>
-                                <strong>Interpreter</strong>
-                                <p id="interpreterLabel">Off</p>
+                                <strong>Converter</strong>
+                                <p id="converterLabel">On</p>
                             </div>
                         </div>
 
-                        <div class="call-actions">
-                            <button id="toggleCamBtn" class="btn-secondary"><i class="fa-solid fa-video"></i> Camera ON</button>
-                            <button id="toggleMicBtn" class="btn-secondary"><i class="fa-solid fa-microphone"></i> Mic ON</button>
-                            <button id="endCallBtn" class="btn-danger">End Call</button>
-                        </div>
+                        <!-- Top call buttons removed — overlay controls next to video are primary -->
                     </div>
                 </div>
 
@@ -96,7 +95,7 @@
                     <div class="panel-header panel-header-flex">
                         <div>
                             <h3>Call history</h3>
-                            <p>Recent calls with interpreter flag and duration.</p>
+                            <p>Recent calls with converter flag and duration.</p>
                         </div>
                         <button id="refreshHistoryBtn" class="btn-secondary"><i class="fa-solid fa-arrows-rotate"></i></button>
                     </div>
@@ -107,7 +106,7 @@
                                     <th>Room</th>
                                     <th>Caller</th>
                                     <th>Callee</th>
-                                    <th>Interpreter</th>
+                                    <th>Converter</th>
                                     <th>Duration</th>
                                 </tr>
                             </thead>
@@ -128,7 +127,7 @@
                         </div>
                         <div class="badge-pill">Local</div>
                     </div>
-                    <div class="camera-card">
+                    <div class="camera-card" id="localCameraCard">
                         <video id="localVideo" autoplay muted playsinline></video>
                         <canvas id="localOverlay"></canvas>
                         <div class="camera-mute" id="localCameraHint">Camera off</div>
@@ -145,6 +144,14 @@
                     <div class="camera-card">
                         <video id="remoteVideo" autoplay playsinline></video>
                         <div class="remote-overlay" id="remoteOverlay">Waiting for participant...</div>
+                        <div id="interpretationOverlay" class="interpret-overlay" style="display:none"></div>
+                        <div class="call-overlay-controls in-call-only" id="callOverlayControls">
+                            <button id="overlayToggleCam" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
+                            <button id="overlayToggleMic" class="overlay-btn" title="Toggle microphone"><i class="fa-solid fa-microphone"></i></button>
+                            <button id="overlayInterpreterBtn" class="overlay-btn" title="Toggle converter"><i class="fa-solid fa-wave-square"></i></button>
+                            <button id="overlayFullscreenBtn" class="overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+                            <button id="overlayEndCallBtn" class="overlay-btn danger" title="End call"><i class="fa-solid fa-phone-slash"></i></button>
+                        </div>
                     </div>
                 </div>
             </section>

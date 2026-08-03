@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Call History - SignCast</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-brand"><h1>Call History</h1></div>
+      <div class="top-actions"><button id="backBtn" class="btn-secondary">Back</button></div>
+    </header>
+    <main class="dashboard-content">
+      <section class="glass-panel call-card">
+        <div class="panel-body">
+          <table class="history-table">
+            <thead><tr><th>Room</th><th>Caller</th><th>Callee</th><th>Interpreter</th><th>Duration</th><th>When</th></tr></thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="history.js"></script>
+</body>
+</html>

@@ -144,6 +144,31 @@ def get_user_info(username):
         return None
 
 
+    def update_user(username, fullname=None, email=None, password=None):
+        """Update user profile fields. Returns True on success."""
+        with get_connection() as conn:
+            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+            if not row:
+                return False, "User not found."
+            fields = []
+            params = []
+            if fullname is not None:
+                fields.append("fullname = ?"); params.append(fullname)
+            if email is not None:
+                fields.append("email = ?"); params.append(email)
+            if password is not None:
+                fields.append("password_hash = ?"); params.append(generate_password_hash(password))
+            if not fields:
+                return True, None
+            params.append(username)
+            sql = f"UPDATE users SET {', '.join(fields)} WHERE username = ?"
+            try:
+                conn.execute(sql, tuple(params))
+                return True, None
+            except Exception as e:
+                return False, str(e)
+
+
 def create_session(username):
     """Issue a new session token for a logged-in user."""
     token = secrets.token_hex(24)

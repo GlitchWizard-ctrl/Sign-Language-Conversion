@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Settings - SignCast</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-brand"><h1>Settings</h1></div>
+      <div class="top-actions"><button id="backBtn" class="btn-secondary">Back</button></div>
+    </header>
+    <main class="dashboard-content">
+      <section class="glass-panel call-card">
+        <div class="panel-body">
+          <label>Language</label>
+          <select id="languageSelect" class="text-input">
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="hi">Hindi</option>
+          </select>
+          <label>Handedness</label>
+          <div style="display:flex; gap:12px; margin-bottom:12px;">
+            <label><input type="radio" name="hand" value="right" checked /> Right</label>
+            <label><input type="radio" name="hand" value="left" /> Left</label>
+          </div>
+          <button id="saveSettings" class="btn-primary">Save</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="settings.js"></script>
+</body>
+</html>

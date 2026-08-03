@@ -49,6 +49,8 @@ a:hover {
 }
 
 .app-header {
+    position: relative;
+    z-index: 1300;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -57,6 +59,19 @@ a:hover {
     background: rgba(15, 23, 42, 0.92);
     backdrop-filter: blur(18px);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.dropdown-menu {
+    position: absolute;
+    right: 0;
+    top: 46px;
+    background: #0f1724;
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 8px 0;
+    min-width: 180px;
+    display: none;
+    z-index: 3000;
 }
 
 .header-brand {
@@ -511,6 +526,17 @@ button:hover {
     z-index: 999;
 }
 
+/* User dropdown */
+.user-dropdown { position: relative; display: inline-block; z-index: 3000; }
+.user-pill { background: transparent; border: none; color: #fff; padding: 8px 12px; border-radius: 20px; display:flex; gap:8px; align-items:center; cursor:pointer; }
+.user-pill .user-role { background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left:6px; }
+.dropdown-caret { margin-left:6px; opacity:0.8 }
+.dropdown-menu { position: absolute; right: 0; top: 46px; background: #0f1724; border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; padding: 8px 0; min-width: 180px; display:none; z-index:1200; }
+.dropdown-menu.show { display:block; }
+.dropdown-item { display:block; padding: 10px 14px; color: #dfe7ff; text-decoration:none; font-size:14px; }
+.dropdown-item:hover { background: rgba(255,255,255,0.03); }
+.dropdown-divider { height:1px; background: rgba(255,255,255,0.04); margin:6px 0; }
+
 .toast {
     display: inline-flex;
     align-items: center;
@@ -706,3 +732,73 @@ button:hover {
         grid-template-columns: 1fr;
     }
 }
+
+.user-dropdown { position: relative; display: inline-block; z-index: 3000; }
+
+/* In-call controls: hidden when not in a call */
+.in-call-only { display: none; }
+
+/* Hide whole video area until in-call to avoid empty waiting screens */
+.video-grid { display: none; }
+body.in-call .video-grid { display: grid; }
+.in-call-only.show { display: flex; }
+
+.call-overlay-controls {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    display: flex;
+    gap: 10px;
+    z-index: 60;
+}
+
+.overlay-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: none;
+    background: rgba(0,0,0,0.45);
+    color: white;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+
+.overlay-btn.danger { background: rgba(239,68,68,0.85); }
+
+.in-call-btn { min-width: 120px; }
+
+/* Interpretation overlay on remote feed */
+.interpret-overlay {
+    position: absolute;
+    left: 18px;
+    top: 18px;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-weight: 700;
+    z-index: 50;
+    pointer-events: none;
+    max-width: 70%;
+    text-align: center;
+}
+
+/* When remote container is fullscreen, pin the local camera as a floating preview */
+body.in-fullscreen #localCameraCard {
+    position: fixed !important;
+    right: 20px;
+    bottom: 20px;
+    width: 300px;
+    height: 200px;
+    z-index: 1100;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+
+/* Icon state for disabled controls */
+.btn-secondary .fa-video-slash, .overlay-btn .fa-video-slash,
+.btn-secondary .fa-microphone-slash, .overlay-btn .fa-microphone-slash {
+    color: #f87171;
+}
+

@@ -24,7 +24,18 @@ os.makedirs(MODEL_PATH, exist_ok=True)
 os.makedirs(STATIC_PATH, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_PATH, static_url_path="")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+# Choose a compatible async_mode for Flask-SocketIO at runtime to avoid
+# "Invalid async_mode specified" when optional dependencies are missing.
+import importlib
+async_mode = None
+if importlib.util.find_spec('eventlet'):
+    async_mode = 'eventlet'
+elif importlib.util.find_spec('gevent'):
+    async_mode = 'gevent'
+else:
+    async_mode = 'threading'
+print(f"[startup] Using Socket.IO async_mode={async_mode}")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 db.init_db()
@@ -220,6 +231,24 @@ def api_profile():
     })
 
 
+@app.route("/api/profile", methods=["PUT"])
+@require_auth
+def api_profile_update():
+    token = request.headers.get("Authorization")
+    username = get_username_from_token(token)
+    if not username:
+        return jsonify({"success": False, "message": "Unauthorized."}), 401
+    data = request.json or {}
+    fullname = data.get("fullname")
+    email = data.get("email")
+    password = data.get("password")
+    ok, err = db.update_user(username, fullname=fullname, email=email, password=password)
+    if not ok:
+        return jsonify({"success": False, "message": err}), 400
+    user = db.get_user_info(username)
+    return jsonify({"success": True, "message": "Profile updated.", "profile": user})
+
+
 @app.route("/api/call-history", methods=["GET"])
 @require_auth
 def api_call_history():
@@ -315,6 +344,23 @@ def handle_interpreter_toggle(data):
                 call["interpreter_mode"] = enabled
                 active_calls[room_id] = call
         emit("interpreter-changed", {"enabled": enabled}, room=room_id)
+
+
+@socketio.on("camera-toggle")
+def handle_camera_toggle(data):
+    room_id = data.get("room_id")
+    enabled = bool(data.get("enabled", False))
+    # broadcast to other participants so they can update UI
+    if room_id:
+        emit("camera-changed", {"room_id": room_id, "enabled": enabled}, room=room_id, include_self=False)
+
+
+@socketio.on("mic-toggle")
+def handle_mic_toggle(data):
+    room_id = data.get("room_id")
+    enabled = bool(data.get("enabled", False))
+    if room_id:
+        emit("mic-changed", {"room_id": room_id, "enabled": enabled}, room=room_id, include_self=False)
 
 
 @socketio.on("end-call")
