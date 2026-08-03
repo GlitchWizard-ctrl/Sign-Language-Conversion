@@ -81,7 +81,7 @@ class LandmarkMLP(nn.Module):
 # ============================================================
 # UTILITIES
 # ============================================================
-def augment_landmarks(feat, n=39):
+def augment_landmarks(feat, n=19):
     return [feat + np.random.normal(0, 0.008, feat.shape).astype(np.float32) for _ in range(n)]
 
 
