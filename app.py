@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, redirect
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 import db
 
@@ -23,6 +24,7 @@ os.makedirs(MODEL_PATH, exist_ok=True)
 os.makedirs(STATIC_PATH, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_PATH, static_url_path="")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 db.init_db()
@@ -94,6 +96,17 @@ def load_cached_model():
 
 load_cached_model()
 
+# ============================================================
+# SOCKET.IO BACKGROUND STATE
+# ============================================================
+active_calls = {}
+client_sessions = {}
+call_lock = threading.Lock()
+
+
+def get_username_from_token(token):
+    return db.verify_session(token)
+
 
 # ============================================================
 # AUTH DECORATOR  (checks Authorization header against sessions table)
@@ -112,8 +125,8 @@ def require_auth(f):
 # STATIC ROUTES
 # ============================================================
 @app.route("/")
-def serve_index():
-    return send_from_directory(STATIC_PATH, "index.html")
+def serve_login():
+    return send_from_directory(STATIC_PATH, "login.html")
 
 @app.route("/<path:path>")
 def serve_static(path):
@@ -191,6 +204,146 @@ def api_status():
         "classes":           classes,
         "training_state":    training_state
     })
+
+
+@app.route("/api/profile", methods=["GET"])
+@require_auth
+def api_profile():
+    token = request.headers.get("Authorization")
+    username = get_username_from_token(token)
+    user = db.get_user_info(username) if username else None
+    return jsonify({
+        "success": True,
+        "username": username,
+        "fullname": user["fullname"] if user else username,
+        "role": user["role"] if user else "user"
+    })
+
+
+@app.route("/api/call-history", methods=["GET"])
+@require_auth
+def api_call_history():
+    token = request.headers.get("Authorization")
+    username = get_username_from_token(token)
+    user = db.get_user_info(username) if username else None
+    history = db.get_call_history(limit=100)
+    if user and user.get("role") == "admin":
+        return jsonify({"success": True, "history": history})
+
+    filtered = [item for item in history if item["caller"] == username or item["callee"] == username]
+    return jsonify({"success": True, "history": filtered})
+
+
+# ============================================================
+# SOCKET.IO EVENTS
+# ============================================================
+
+@socketio.on("connect")
+def handle_connect():
+    emit("connected", {"message": "Connected to signaling server."})
+
+
+@socketio.on("join-room")
+def handle_join_room(data):
+    token = data.get("token")
+    room_id = data.get("room_id")
+    interpreter_mode = bool(data.get("interpreter_mode", False))
+
+    username = get_username_from_token(token)
+    if not username:
+        emit("room-error", {"message": "Unauthorized."})
+        return
+
+    if not room_id:
+        emit("room-error", {"message": "Room ID is required."})
+        return
+
+    join_room(room_id)
+    with call_lock:
+        call = active_calls.get(room_id, {
+            "room_id": room_id,
+            "participants": [],
+            "interpreter_mode": interpreter_mode,
+            "start_time": time.time()
+        })
+
+        if username not in call["participants"]:
+            call["participants"].append(username)
+        call["interpreter_mode"] = call["interpreter_mode"] or interpreter_mode
+        active_calls[room_id] = call
+
+    room_owner = call["participants"][0] if call["participants"] else username
+    emit("room-joined", {
+        "room_id": room_id,
+        "participants": call["participants"],
+        "interpreter_mode": call["interpreter_mode"],
+        "room_owner": room_owner
+    }, room=room_id)
+
+
+@socketio.on("offer")
+def handle_offer(data):
+    target = data.get("target")
+    room_id = data.get("room_id")
+    if target and room_id:
+        emit("offer", data, room=room_id, include_self=False)
+
+
+@socketio.on("answer")
+def handle_answer(data):
+    target = data.get("target")
+    room_id = data.get("room_id")
+    if target and room_id:
+        emit("answer", data, room=room_id, include_self=False)
+
+
+@socketio.on("ice-candidate")
+def handle_ice_candidate(data):
+    room_id = data.get("room_id")
+    if room_id:
+        emit("ice-candidate", data, room=room_id, include_self=False)
+
+
+@socketio.on("interpreter-toggle")
+def handle_interpreter_toggle(data):
+    room_id = data.get("room_id")
+    enabled = bool(data.get("enabled", False))
+    if room_id:
+        with call_lock:
+            call = active_calls.get(room_id)
+            if call:
+                call["interpreter_mode"] = enabled
+                active_calls[room_id] = call
+        emit("interpreter-changed", {"enabled": enabled}, room=room_id)
+
+
+@socketio.on("end-call")
+def handle_end_call(data):
+    token = data.get("token")
+    room_id = data.get("room_id")
+    username = get_username_from_token(token)
+    if not username or not room_id:
+        return
+
+    leave_room(room_id)
+    with call_lock:
+        call = active_calls.pop(room_id, None)
+
+    if call:
+        participants = call.get("participants", [])
+        start_time = call.get("start_time", time.time())
+        end_time = time.time()
+        duration = int(end_time - start_time)
+
+        caller = participants[0] if len(participants) > 0 else username
+        callee = participants[1] if len(participants) > 1 else username
+
+        db.save_call_history(room_id, caller, callee, call.get("interpreter_mode", False),
+                             time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
+                             time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)),
+                             duration)
+
+    emit("call-ended", {"room_id": room_id}, room=room_id)
 
 
 @app.route("/api/record", methods=["POST"])
@@ -419,4 +572,4 @@ if __name__ == "__main__":
     print(f"  Device   : {device.type.upper()}")
     print(f"  Database : {db.DB_PATH}")
     print("=" * 55 + "\n")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)

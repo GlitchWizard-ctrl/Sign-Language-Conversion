@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Sign Call Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-icon">
+                    <i class="fa-solid fa-hands-asl-interpreting"></i>
+                </div>
+                <div>
+                    <h1>SignCast Live</h1>
+                    <p>Live call, sign conversion, interpreter mode.</p>
+                </div>
+            </div>
+            <div class="top-actions">
+                <div class="user-pill">
+                    <i class="fa-solid fa-user"></i>
+                    <span id="usernameLabel">Guest</span>
+                    <span id="userRoleLabel" class="user-role">USER</span>
+                </div>
+                <button id="signOutBtn" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</button>
+            </div>
+            <div id="adminBanner" class="admin-banner" style="display:none;">
+                <i class="fa-solid fa-shield-halved"></i> Admin supervisor mode enabled.
+            </div>
+        </header>
+
+        <main class="dashboard-content">
+            <section class="call-grid">
+                <div class="glass-panel call-card">
+                    <div class="panel-header panel-header-flex">
+                        <div>
+                            <h3>Call control</h3>
+                            <p>Create a room, join someone, and manage the call.</p>
+                        </div>
+                        <div class="status-pill status-pill-disconnected" id="connectionStatus">Disconnected</div>
+                    </div>
+                    <div class="panel-body">
+                        <div class="control-grid-2">
+                            <div class="control-item">
+                                <label for="roomIdInput">Room code</label>
+                                <input id="roomIdInput" class="text-input" placeholder="Enter a room code" />
+                            </div>
+                            <div class="control-item">
+                                <label>&nbsp;</label>
+                                <button id="generateRoomBtn" class="btn-secondary">Generate</button>
+                            </div>
+                        </div>
+
+                        <div class="call-actions-two">
+                            <button id="startRoomBtn" class="btn-primary">Create Room</button>
+                            <button id="joinRoomBtn" class="btn-secondary">Join Room</button>
+                        </div>
+
+                        <div class="toggle-grid">
+                            <div class="switch-block">
+                                <span>Interpreter mode</span>
+                                <label class="switch"><input type="checkbox" id="interpreterSwitch" /><span class="slider"></span></label>
+                            </div>
+                            <div class="switch-block">
+                                <span>Live converter</span>
+                                <label class="switch"><input type="checkbox" id="converterSwitch" checked /><span class="slider"></span></label>
+                            </div>
+                        </div>
+
+                        <div class="summary-block">
+                            <div>
+                                <strong>Active room</strong>
+                                <p id="activeRoomLabel">None</p>
+                            </div>
+                            <div>
+                                <strong>Interpreter</strong>
+                                <p id="interpreterLabel">Off</p>
+                            </div>
+                        </div>
+
+                        <div class="call-actions">
+                            <button id="toggleCamBtn" class="btn-secondary"><i class="fa-solid fa-video"></i> Camera ON</button>
+                            <button id="toggleMicBtn" class="btn-secondary"><i class="fa-solid fa-microphone"></i> Mic ON</button>
+                            <button id="endCallBtn" class="btn-danger">End Call</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-panel call-card">
+                    <div class="panel-header panel-header-flex">
+                        <div>
+                            <h3>Call history</h3>
+                            <p>Recent calls with interpreter flag and duration.</p>
+                        </div>
+                        <button id="refreshHistoryBtn" class="btn-secondary"><i class="fa-solid fa-arrows-rotate"></i></button>
+                    </div>
+                    <div class="panel-body history-panel">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>Room</th>
+                                    <th>Caller</th>
+                                    <th>Callee</th>
+                                    <th>Interpreter</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyBody">
+                                <tr><td colspan="5" class="history-empty">No recent calls yet.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section class="video-grid">
+                <div class="glass-panel video-card">
+                    <div class="panel-header panel-header-flex">
+                        <div>
+                            <h3>Your video</h3>
+                            <p>Local camera feed with sign detection overlay.</p>
+                        </div>
+                        <div class="badge-pill">Local</div>
+                    </div>
+                    <div class="camera-card">
+                        <video id="localVideo" autoplay muted playsinline></video>
+                        <canvas id="localOverlay"></canvas>
+                        <div class="camera-mute" id="localCameraHint">Camera off</div>
+                    </div>
+                </div>
+                <div class="glass-panel video-card">
+                    <div class="panel-header panel-header-flex">
+                        <div>
+                            <h3>Remote feed</h3>
+                            <p>Other participant's stream.</p>
+                        </div>
+                        <div class="badge-pill">Remote</div>
+                    </div>
+                    <div class="camera-card">
+                        <video id="remoteVideo" autoplay playsinline></video>
+                        <div class="remote-overlay" id="remoteOverlay">Waiting for participant...</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="stats-grid-full">
+                <div class="glass-panel stats-card">
+                    <div class="panel-header">
+                        <h3>Live conversion status</h3>
+                    </div>
+                    <div class="panel-body stats-grid-inner">
+                        <div class="stat-widget">
+                            <span class="stat-value" id="signLabelValue">—</span>
+                            <span class="stat-text">Detected sign</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="confidenceValue">—</span>
+                            <span class="stat-text">Confidence</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="frameRateValue">—</span>
+                            <span class="stat-text">FPS</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="connectionLabel">Disconnected</span>
+                            <span class="stat-text">Call status</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="app.js"></script>
+</body>
+</html>

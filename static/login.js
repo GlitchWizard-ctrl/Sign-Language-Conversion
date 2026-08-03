@@ -4,6 +4,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const alertText = document.getElementById("alertText");
     const submitBtn = document.getElementById("submitBtn");
 
+    checkSession();
+
     loginForm.addEventListener("submit", async (e) => {
         e.preventDefault();
 
@@ -18,27 +20,53 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const response = await fetch("/api/login", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json"
+                },
                 body: JSON.stringify({ username, password })
             });
 
             const data = await response.json();
-
             if (response.ok && data.success) {
                 localStorage.setItem("authToken", data.token);
                 localStorage.setItem("username", username);
+                localStorage.setItem("fullname", data.fullname);
+                localStorage.setItem("role", data.role);
+                document.cookie = `authToken=${data.token}; path=/`;
                 window.location.href = "index.html";
             } else {
                 showError(data.message || "Invalid credentials. Please try again.");
             }
         } catch (err) {
             console.error("Login request failed:", err);
-            showError("Server unreachable. Please make sure the backend is running.");
+            showError("Server unreachable. Please make sure backend is running.");
         } finally {
             submitBtn.disabled = false;
             submitBtn.innerHTML = origText;
         }
     });
+
+    async function checkSession() {
+        const authToken = localStorage.getItem("authToken");
+        if (!authToken) return;
+
+        try {
+            const response = await fetch("/api/profile", {
+                headers: { "Authorization": authToken }
+            });
+            if (response.ok) {
+                window.location.href = "index.html";
+                return;
+            }
+        } catch (err) {
+            console.error("Session validation failed:", err);
+        }
+
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("username");
+        localStorage.removeItem("fullname");
+        localStorage.removeItem("role");
+    }
 
     function showError(message) {
         alertText.textContent = message;

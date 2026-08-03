@@ -3,39 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISL Sign Recognition — Sign In</title>
+    <title>Live Sign Call — Sign In</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-zNHRP3r2xzdtC3VwQf1n8EA5dM2z4Jm2cqTZ+q+K5f6s0w3KkW6MkA9zW7rJfEEdE2mLh6h6v7E2o4e6hjGw1A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="login-wrapper">
-        <div class="login-card glass-panel">
-            <div class="brand-logo">
-                <i class="fa-solid fa-hands-asl-interpreting" style="color: white;"></i>
+    <div class="auth-page">
+        <section class="auth-panel glass-panel">
+            <div class="brand-mark brand-mark-small">
+                <i class="fa-solid fa-hands-asl-interpreting"></i>
             </div>
-            <h2>Welcome Back</h2>
-            <p>ISL Real-Time Hand Landmark Classifier</p>
+            <h1>Welcome back</h1>
+            <p>Sign in to start a live sign language video call with intelligent conversion.</p>
 
             <div id="alertMessage" class="alert-message alert-error">
                 <i class="fa-solid fa-triangle-exclamation"></i>
                 <span id="alertText">Invalid credentials. Try again.</span>
             </div>
 
-            <form id="loginForm">
+            <form id="loginForm" class="auth-form">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <div class="input-wrapper">
-                        <input type="text" id="username" class="form-input" placeholder="Enter username" required>
+                        <input type="text" id="username" class="form-input" placeholder="Username" required>
                         <i class="fa-solid fa-user"></i>
                     </div>
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
                     <div class="input-wrapper">
-                        <input type="password" id="password" class="form-input" placeholder="Enter password" required>
+                        <input type="password" id="password" class="form-input" placeholder="Password" required>
                         <i class="fa-solid fa-lock"></i>
                     </div>
                 </div>
@@ -44,10 +44,10 @@
                 </button>
             </form>
 
-            <div class="auth-switch">
-                Don't have an account? <a href="register.html" class="auth-link">Create one</a>
+            <div class="auth-footer">
+                New here? <a href="register.html">Create an account</a>
             </div>
-        </div>
+        </section>
     </div>
     <script src="login.js"></script>
 </body>

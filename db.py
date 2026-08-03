@@ -74,6 +74,18 @@ def init_db():
                 weights_path   TEXT NOT NULL,
                 is_active      INTEGER DEFAULT 1
             );
+
+            CREATE TABLE IF NOT EXISTS call_history (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id           TEXT NOT NULL,
+                caller            TEXT NOT NULL,
+                callee            TEXT NOT NULL,
+                interpreter_mode  INTEGER NOT NULL DEFAULT 0,
+                start_time        TIMESTAMP NOT NULL,
+                end_time          TIMESTAMP NOT NULL,
+                duration_seconds  INTEGER NOT NULL,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # Seed default admin user only if users table is empty
@@ -217,3 +229,36 @@ def get_active_model_run():
             "classes": json.loads(row["classes"]),
             "weights_path": row["weights_path"],
         }
+
+
+# -----------------------------------------------------------------------
+# CALL HISTORY
+# -----------------------------------------------------------------------
+
+def save_call_history(room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO call_history (room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (room_id, caller, callee, int(interpreter_mode), start_time, end_time, duration_seconds)
+        )
+
+
+def get_call_history(limit=50):
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds, created_at FROM call_history ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return [
+            {
+                "room_id": r["room_id"],
+                "caller": r["caller"],
+                "callee": r["callee"],
+                "interpreter_mode": bool(r["interpreter_mode"]),
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "duration_seconds": r["duration_seconds"],
+                "created_at": r["created_at"]
+            }
+            for r in rows
+        ]
