@@ -1,628 +1,662 @@
 import os
-import time
+import base64
+import pickle
+import re
 import threading
+import tempfile
 from functools import wraps
+from collections import Counter
 
 import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+import cv2
+
+from flask import Flask, request, jsonify, send_from_directory
+from flask_socketio import SocketIO, join_room, leave_room, emit
+
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from flask import Flask, request, jsonify, send_from_directory, redirect
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import LabelEncoder
 
 import db
 
-# ============================================================
-# PATHS & FLASK SETUP
-# ============================================================
-BASE_PATH   = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH  = os.path.join(BASE_PATH, "models")
-STATIC_PATH = os.path.join(BASE_PATH, "static")
+try:
+    import mediapipe as mp
+except ImportError:
+    raise ImportError("Run: pip install mediapipe")
 
-os.makedirs(MODEL_PATH, exist_ok=True)
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_PATH, "models")
+DATASET_DIR = os.path.join(BASE_PATH, "datasets")
+STATIC_PATH = os.path.join(BASE_PATH, "static")
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(DATASET_DIR, exist_ok=True)
 os.makedirs(STATIC_PATH, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_PATH, static_url_path="")
-# Choose a compatible async_mode for Flask-SocketIO at runtime to avoid
-# "Invalid async_mode specified" when optional dependencies are missing.
-import importlib
-async_mode = None
-if importlib.util.find_spec('eventlet'):
-    async_mode = 'eventlet'
-elif importlib.util.find_spec('gevent'):
-    async_mode = 'gevent'
-else:
-    async_mode = 'threading'
-print(f"[startup] Using Socket.IO async_mode={async_mode}")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+
+# A model swap must be atomic: an active video call may be predicting while an
+# administrator starts a new training run.
+model_lock = threading.RLock()
+training_lock = threading.Lock()
 
 db.init_db()
 
-# ============================================================
-# TRAINING STATE  (runtime only, not persisted in DB)
-# ============================================================
-training_state = {
-    "is_training": False,
-    "current_epoch": 0,
-    "total_epochs": 0,
-    "last_loss": 0.0,
-    "best_accuracy": 0.0,
-    "logs": [],
-    "error_message": None
-}
-training_lock = threading.Lock()
-
-# ============================================================
-# MODEL CACHE  (in-memory; metadata comes from DB)
-# ============================================================
-model_cache = {"model": None, "classes": [], "loaded": False}
-model_lock  = threading.Lock()
+# ------------------------------------------------------------------
+# Sign model — loaded at startup if it exists, hot-reloaded after
+# every in-app training run (no restart needed).
+# ------------------------------------------------------------------
+sign_model = None
+label_encoder = None
 
 
-# ============================================================
-# MLP MODEL
-# ============================================================
-class LandmarkMLP(nn.Module):
-    def __init__(self, input_size, num_classes):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_size, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 256),        nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 128),        nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(128, 64),         nn.BatchNorm1d(64),  nn.ReLU(), nn.Dropout(0.1),
-            nn.Linear(64, num_classes)
-        )
-    def forward(self, x):
-        return self.net(x)
+def try_load_model():
+    global sign_model, label_encoder
+    try:
+        with open(os.path.join(MODEL_DIR, "best_model.pkl"), "rb") as f:
+            sign_model = pickle.load(f)
+        with open(os.path.join(DATASET_DIR, "label_encoder.pkl"), "rb") as f:
+            label_encoder = pickle.load(f)
+        print(f"[app] Loaded sign model with {len(label_encoder.classes_)} classes")
+    except Exception as e:
+        sign_model = None
+        label_encoder = None
+        print(f"[app] No trained model yet ({e}). Record signs + train from the admin dashboard.")
 
 
-# ============================================================
-# UTILITIES
-# ============================================================
-def augment_landmarks(feat, n=19):
-    return [feat + np.random.normal(0, 0.008, feat.shape).astype(np.float32) for _ in range(n)]
+try_load_model()
+
+mp_hands = mp.solutions.hands
+hands_detector = mp_hands.Hands(
+    static_image_mode=True,
+    max_num_hands=2,
+    model_complexity=1,
+    min_detection_confidence=0.6,
+)
 
 
-def load_cached_model():
-    global model_cache
-    with model_lock:
-        run = db.get_active_model_run()
-        if not run:
-            model_cache["loaded"] = False
-            return False
-        weights_path = os.path.join(MODEL_PATH, run["weights_path"])   # rebuild path fresh
-        if not os.path.exists(weights_path):
-            model_cache["loaded"] = False
-            return False
-        try:
-            ckpt = torch.load(weights_path, map_location=device, weights_only=False)
-            model = LandmarkMLP(run["feature_size"], len(run["classes"])).to(device)
-            model.load_state_dict(ckpt["model_state"])
-            model.eval()
-            model_cache.update({"model": model, "classes": run["classes"], "loaded": True})
-            return True
-        except Exception as e:
-            print(f"Model load error: {e}")
-            model_cache["loaded"] = False
-            return False
+def decode_frame(image_b64):
+    """base64 data-URL or raw base64 JPEG -> BGR np array, or None."""
+    try:
+        header_split = image_b64.split(",", 1)
+        raw = header_split[1] if len(header_split) == 2 else header_split[0]
+        img_bytes = base64.b64decode(raw)
+        arr = np.frombuffer(img_bytes, dtype=np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    except Exception as e:
+        print(f"[decode_frame] error: {e}")
+        return None
 
 
-load_cached_model()
+def normalize_feature_vector(features):
+    """Normalize a 126-value left/right hand vector around each wrist.
 
-# ============================================================
-# SOCKET.IO BACKGROUND STATE
-# ============================================================
-active_calls = {}
-client_sessions = {}
-call_lock = threading.Lock()
+    Applying this during training keeps previously recorded camera-relative
+    samples compatible with the normalized vectors captured by newer versions.
+    """
+    vector = np.asarray(features, dtype=np.float32).reshape(2, 21, 3).copy()
+    for hand in vector:
+        if not np.any(hand):
+            continue
+        hand -= hand[0]
+        scale = float(np.max(np.linalg.norm(hand[:, :2], axis=1)))
+        if scale > 1e-6:
+            hand /= scale
+    return vector.reshape(-1)
 
 
-def get_username_from_token(token):
-    return db.verify_session(token)
+def augment_landmark_features(features, copies=4, seed=42):
+    """Create small, realistic landmark variations for model training only.
+
+    MediaPipe landmarks are already centered at each wrist.  We vary pose
+    orientation, size, and landmark position slightly, which helps the model
+    tolerate ordinary camera angle and lighting-detection variation without
+    polluting the held-out validation samples.
+    """
+    rng = np.random.default_rng(seed)
+    source = np.asarray(features, dtype=np.float32).reshape(-1)
+    augmented = [source]
+
+    for _ in range(copies):
+        sample = source.reshape(2, 21, 3).copy()
+        for hand in sample:
+            if not np.any(hand):
+                continue
+            angle = np.deg2rad(rng.uniform(-12, 12))
+            rotation = np.array(
+                [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]],
+                dtype=np.float32,
+            )
+            scale = rng.uniform(0.90, 1.10)
+            hand[:, :2] = (hand[:, :2] @ rotation.T) * scale
+            hand[1:] += rng.normal(0, 0.008, size=(20, 3)).astype(np.float32)
+            hand[0] = 0.0  # preserve the wrist origin
+        augmented.append(normalize_feature_vector(sample.reshape(-1)))
+
+    return np.asarray(augmented, dtype=np.float32)
 
 
-# ============================================================
-# AUTH DECORATOR  (checks Authorization header against sessions table)
-# ============================================================
+def get_hand_features(frame):
+    """BGR frame -> 126-dim landmark vector (left 63 + right 63), or None if no hand found."""
+    if frame is None:
+        return None
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands_detector.process(rgb)
+
+    left = [0.0] * 63
+    right = [0.0] * 63
+    if results.multi_hand_landmarks and results.multi_handedness:
+        for hand_lm, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+            # Make samples robust to where the hand is in the camera frame and
+            # to distance from the camera. The wrist is the origin and the
+            # largest wrist-to-landmark distance is the scale.
+            points = np.array([[lm.x, lm.y, lm.z] for lm in hand_lm.landmark], dtype=np.float32)
+            points -= points[0]
+            scale = float(np.max(np.linalg.norm(points[:, :2], axis=1)))
+            if scale < 1e-6:
+                continue
+            coords = (points / scale).reshape(-1).tolist()
+            label = handedness.classification[0].label
+            if label == "Left":
+                left = coords
+            else:
+                right = coords
+
+    feat = np.array(left + right, dtype=np.float32)
+    return feat if np.any(feat) else None
+
+
+def predict_sign_from_b64(image_b64):
+    if sign_model is None or label_encoder is None:
+        return None, 0.0
+    frame = decode_frame(image_b64)
+    feat = get_hand_features(frame)
+    if feat is None:
+        return None, 0.0
+    return predict_sign_from_features(feat)
+
+
+def predict_sign_from_features(features, normalize=False):
+    """Return a prediction for one 126-value (left + right hand) vector."""
+    try:
+        feat = np.asarray(features, dtype=np.float32).reshape(-1)
+        if feat.size != 126 or not np.all(np.isfinite(feat)) or not np.any(feat):
+            return None, 0.0
+        if normalize:
+            feat = normalize_feature_vector(feat)
+        with model_lock:
+            model = sign_model
+            encoder = label_encoder
+        if model is None or encoder is None:
+            return None, 0.0
+        candidates = [feat]
+        left_present = bool(np.any(feat[:63]))
+        right_present = bool(np.any(feat[63:]))
+        if left_present != right_present:
+            candidates.append(np.concatenate((feat[63:], feat[:63])))
+        candidate_matrix = np.asarray(candidates, dtype=np.float32)
+        if hasattr(model, "predict_proba"):
+            probabilities = model.predict_proba(candidate_matrix)
+            row_index, idx = np.unravel_index(int(np.argmax(probabilities)), probabilities.shape)
+            conf = float(probabilities[row_index, idx]) * 100
+        else:
+            idx = int(model.predict(candidate_matrix)[0])
+            conf = 100.0
+        word = encoder.inverse_transform([idx])[0]
+        return str(word), conf
+    except Exception as e:
+        print(f"[predict] error: {e}")
+        return None, 0.0
+
+
+# ------------------------------------------------------------------
+# Auth helpers
+# ------------------------------------------------------------------
+
+def get_token_from_request():
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    # The user dashboard sends the token directly while the admin dashboard
+    # uses the conventional ``Bearer <token>`` form. Support both.
+    return auth or request.args.get("token")
+
+
 def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        token = request.headers.get("Authorization")
-        if not db.verify_session(token):
-            return jsonify({"success": False, "message": "Unauthorized. Please log in again."}), 401
+        token = get_token_from_request()
+        username = db.verify_session(token)
+        if not username:
+            return jsonify({"success": False, "message": "Unauthorized"}), 401
+        request.username = username
         return f(*args, **kwargs)
     return wrapper
 
 
-# ============================================================
-# STATIC ROUTES
-# ============================================================
+def require_admin(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = get_token_from_request()
+        username = db.verify_session(token)
+        if not username or db.get_user_role(username) != "admin":
+            return jsonify({"success": False, "message": "Admin access required"}), 403
+        request.username = username
+        return f(*args, **kwargs)
+    return wrapper
+
+
+# ------------------------------------------------------------------
+# Auth routes
+# ------------------------------------------------------------------
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    data = request.get_json(force=True) or {}
+    fullname = (data.get("fullname") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    if not all([fullname, email, username]) or len(password) < 6:
+        return jsonify({"success": False, "message": "All fields are required (password min 6 chars)."}), 400
+
+    ok, err = db.register_user(fullname, email, username, password)
+    if not ok:
+        return jsonify({"success": False, "message": err}), 409
+    return jsonify({"success": True})
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    if not db.verify_user(username, password):
+        return jsonify({"success": False, "message": "Invalid credentials. Try again."}), 401
+
+    token = db.create_session(username)
+    info = db.get_user_info(username)
+    return jsonify({"success": True, "token": token, "user": info})
+
+
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    if not db.verify_user(username, password):
+        return jsonify({"success": False, "message": "Invalid credentials."}), 401
+    if db.get_user_role(username) != "admin":
+        return jsonify({"success": False, "message": "This account does not have admin access."}), 403
+
+    token = db.create_session(username)
+    info = db.get_user_info(username)
+    return jsonify({"success": True, "token": token, "user": info})
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    token = get_token_from_request()
+    if token:
+        db.delete_session(token)
+    return jsonify({"success": True})
+
+
+@app.route("/api/session", methods=["GET"])
+def api_session():
+    token = get_token_from_request()
+    username = db.verify_session(token)
+    if not username:
+        return jsonify({"success": False}), 401
+    return jsonify({"success": True, "user": db.get_user_info(username)})
+
+
+@app.route("/api/profile", methods=["GET"])
+@require_auth
+def api_profile():
+    """Return the signed-in user's profile for the user dashboard."""
+    info = db.get_user_info(request.username)
+    if not info:
+        return jsonify({"success": False, "message": "User not found"}), 404
+    return jsonify({"success": True, **info})
+
+
+# ------------------------------------------------------------------
+# Call history routes
+# ------------------------------------------------------------------
+
+@app.route("/api/call-history", methods=["GET"])
+@require_auth
+def api_call_history():
+    return jsonify({"success": True, "calls": db.get_call_history(request.username)})
+
+
+# ------------------------------------------------------------------
+# Admin — users / calls / stats
+# ------------------------------------------------------------------
+
+@app.route("/api/admin/users", methods=["GET"])
+@require_admin
+def api_admin_users():
+    return jsonify({"success": True, "users": db.get_all_users()})
+
+
+@app.route("/api/admin/calls", methods=["GET"])
+@require_admin
+def api_admin_calls():
+    return jsonify({"success": True, "calls": db.get_all_calls()})
+
+
+@app.route("/api/admin/stats", methods=["GET"])
+@require_admin
+def api_admin_stats():
+    users = db.get_all_users()
+    calls = db.get_all_calls()
+    active_calls = [c for c in calls if c["ended_at"] is None]
+    run = db.get_active_model_run()
+    return jsonify({
+        "success": True,
+        "stats": {
+            "total_users": len(users),
+            "total_calls": len(calls),
+            "active_calls": len(active_calls),
+            "model_loaded": sign_model is not None,
+            "total_samples": db.count_samples(),
+            "active_run": run,
+            "sign_counts": db.get_sample_counts(),
+        }
+    })
+
+
+# ------------------------------------------------------------------
+# Admin — browser-based sign recording
+# ------------------------------------------------------------------
+
+@app.route("/api/admin/samples", methods=["POST"])
+@require_admin
+def api_admin_add_sample():
+    data = request.get_json(force=True) or {}
+    label = (data.get("label") or "").strip().lower().replace(" ", "_")
+    image_b64 = data.get("image")
+
+    if not label or not image_b64:
+        return jsonify({"success": False, "message": "label and image are required."}), 400
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", label):
+        return jsonify({"success": False, "message": "Use 1–40 lowercase letters, numbers, _ or - for the sign label."}), 400
+    if len(image_b64) > 1_500_000:
+        return jsonify({"success": False, "message": "Image is too large. Please capture another frame."}), 413
+
+    frame = decode_frame(image_b64)
+    feat = get_hand_features(frame)
+    if feat is None:
+        return jsonify({"success": False, "message": "No hand detected in frame. Try again."}), 422
+
+    # Prevent a held burst button from filling the dataset with near-identical
+    # frames. A varied set trains substantially better than duplicated frames.
+    if db.has_near_duplicate(label, feat.tolist(), threshold=0.035):
+        return jsonify({"success": False, "message": "Frame is too similar to a recent sample. Move your hand slightly and capture again."}), 422
+
+    db.insert_sample(label, feat.tolist())
+    counts = db.get_sample_counts()
+    return jsonify({"success": True, "label": label, "count": counts.get(label, 0), "counts": counts})
+
+
+@app.route("/api/admin/samples/stats", methods=["GET"])
+@require_admin
+def api_admin_sample_stats():
+    return jsonify({"success": True, "counts": db.get_sample_counts(), "total": db.count_samples()})
+
+
+@app.route("/api/admin/samples/<label>", methods=["DELETE"])
+@require_admin
+def api_admin_delete_samples(label):
+    label = label.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", label):
+        return jsonify({"success": False, "message": "Invalid sign label."}), 400
+    db.delete_samples_by_label(label)
+    return jsonify({"success": True, "counts": db.get_sample_counts()})
+
+
+# ------------------------------------------------------------------
+# Admin — in-app training (replaces running train.py locally)
+# ------------------------------------------------------------------
+
+@app.route("/api/admin/train", methods=["POST"])
+@require_admin
+def api_admin_train():
+    global sign_model, label_encoder
+
+    if not training_lock.acquire(blocking=False):
+        return jsonify({"success": False, "message": "Training is already in progress."}), 409
+
+    try:
+        return _train_model()
+    finally:
+        training_lock.release()
+
+
+def _train_model():
+    """Train and atomically activate a model from administrator samples."""
+    global sign_model, label_encoder
+
+    samples = db.get_all_samples()
+    if len(samples) < 20:
+        return jsonify({"success": False, "message": "Not enough samples yet (need at least 20 total)."}), 400
+
+    labels = [s["label"] for s in samples]
+    features = np.array([normalize_feature_vector(s["features"]) for s in samples], dtype=np.float32)
+    counts = Counter(labels)
+
+    if len(counts) < 2:
+        return jsonify({"success": False, "message": "Need at least 2 different signs to train."}), 400
+    if min(counts.values()) < 5:
+        thin = [lbl for lbl, c in counts.items() if c < 5]
+        return jsonify({"success": False,
+                         "message": f"Record at least 5 varied samples for: {', '.join(thin)}"}), 400
+
+    le_new = LabelEncoder()
+    y = le_new.fit_transform(labels)
+
+    test_count = max(len(counts), int(np.ceil(len(samples) * 0.2)))
+    X_train, X_test, y_train, y_test = train_test_split(features, y, test_size=test_count, random_state=42, stratify=y)
+
+    # Expand only the training portion.  Keeping X_test untouched gives the
+    # reported accuracy a meaningful measure of real, unseen samples.
+    augmented_X = []
+    augmented_y = []
+    for feature, label in zip(X_train, y_train):
+        variants = augment_landmark_features(feature)
+        augmented_X.append(variants)
+        augmented_y.extend([label] * len(variants))
+    X_train = np.vstack(augmented_X)
+    y_train = np.asarray(augmented_y)
+
+    clf = RandomForestClassifier(n_estimators=400, random_state=42, n_jobs=-1, class_weight="balanced_subsample", min_samples_leaf=1)
+    clf.fit(X_train, y_train)
+
+    preds = clf.predict(X_test)
+    acc = float(accuracy_score(y_test, preds))
+    report = classification_report(
+        y_test, preds, target_names=list(le_new.classes_),
+        output_dict=True, zero_division=0
+    )
+
+    # Never leave a half-written model if the process is interrupted.
+    for target, value in ((os.path.join(MODEL_DIR, "best_model.pkl"), clf),
+                          (os.path.join(DATASET_DIR, "label_encoder.pkl"), le_new)):
+        fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(target), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(value, f)
+            os.replace(temp_path, target)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    db.save_model_run(
+        epochs=0, batch_size=0, lr=0.0,
+        best_accuracy=acc, final_loss=0.0,
+        feature_size=int(features.shape[1]),
+        classes=list(le_new.classes_),
+        weights_path="models/best_model.pkl",
+    )
+
+    # Hot-reload — live call captions use the new model immediately, no restart.
+    with model_lock:
+        sign_model = clf
+        label_encoder = le_new
+
+    return jsonify({
+        "success": True,
+        "accuracy": acc,
+        "num_samples": len(samples),
+        "num_classes": len(le_new.classes_),
+        "classes": list(le_new.classes_),
+        "report": report,
+    })
+
+
+# ------------------------------------------------------------------
+# Live sign prediction — REST endpoint (used by app.js during calls
+# as an alternative/fallback to the "sign-frame" socket event below)
+# ------------------------------------------------------------------
+
+@app.route("/api/predict", methods=["POST"])
+@require_auth
+def api_predict():
+    data = request.get_json(force=True) or {}
+    features = data.get("features")
+    if features is not None:
+        word, confidence = predict_sign_from_features(features, normalize=True)
+        if word is None:
+            return jsonify({"success": False, "message": "Invalid or empty hand landmarks."}), 400
+        return jsonify({"success": True, "predicted_class": word, "confidence": confidence})
+
+    image_b64 = data.get("image")
+    if not image_b64:
+        return jsonify({"success": False, "message": "features or image is required."}), 400
+
+    word, confidence = predict_sign_from_b64(image_b64)
+    if word is None:
+        return jsonify({"success": False, "message": "No hand detected or model not trained."}), 400
+
+    return jsonify({"success": True, "predicted_class": word, "confidence": confidence})
+
+
+# ------------------------------------------------------------------
+# Static entry points
+# ------------------------------------------------------------------
+
 @app.route("/")
-def serve_login():
+def root():
     return send_from_directory(STATIC_PATH, "login.html")
+
 
 @app.route("/<path:path>")
 def serve_static(path):
     return send_from_directory(STATIC_PATH, path)
 
 
-# ============================================================
-# AUTH ENDPOINTS
-# ============================================================
+# ------------------------------------------------------------------
+# Socket.IO — WebRTC signaling + live sign captions
+# ------------------------------------------------------------------
 
-@app.route("/api/register", methods=["POST"])
-def api_register():
-    data     = request.json or {}
-    fullname = data.get("fullname", "").strip()
-    email    = data.get("email", "").strip().lower()
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
+sid_to_user = {}
+room_members = {}
 
-    if not all([fullname, email, username, password]):
-        return jsonify({"success": False, "message": "All fields are required."}), 400
-    if len(password) < 6:
-        return jsonify({"success": False, "message": "Password must be at least 6 characters."}), 400
-    if len(username) < 3:
-        return jsonify({"success": False, "message": "Username must be at least 3 characters."}), 400
-
-    success, error = db.register_user(fullname, email, username, password)
-    if success:
-        return jsonify({"success": True, "message": "Account created successfully. You can now log in."})
-    else:
-        return jsonify({"success": False, "message": error}), 409
-
-
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    data     = request.json or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
-
-    if username and password and db.verify_user(username, password):
-        token     = db.create_session(username)
-        user_info = db.get_user_info(username)
-        return jsonify({
-            "success":  True,
-            "token":    token,
-            "fullname": user_info["fullname"] if user_info else username,
-            "role":     user_info["role"]     if user_info else "user",
-            "message":  "Authenticated successfully"
-        })
-    return jsonify({"success": False, "message": "Invalid username or password."}), 401
-
-
-@app.route("/api/logout", methods=["POST"])
-@require_auth
-def api_logout():
-    db.delete_session(request.headers.get("Authorization"))
-    return jsonify({"success": True, "message": "Logged out."})
-
-
-# ============================================================
-# CORE API ENDPOINTS
-# ============================================================
-
-@app.route("/api/status", methods=["GET"])
-@require_auth
-def api_status():
-    raw_count = db.count_samples()
-    run       = db.get_active_model_run()
-    classes   = run["classes"] if run else []
-    model_ok  = run is not None and os.path.exists(run["weights_path"])
-
-    return jsonify({
-        "raw_samples":       raw_count,
-        "augmented_samples": raw_count * 100,
-        "model_trained":     model_ok,
-        "classes":           classes,
-        "training_state":    training_state
-    })
-
-
-@app.route("/api/profile", methods=["GET"])
-@require_auth
-def api_profile():
-    token = request.headers.get("Authorization")
-    username = get_username_from_token(token)
-    user = db.get_user_info(username) if username else None
-    return jsonify({
-        "success": True,
-        "username": username,
-        "fullname": user["fullname"] if user else username,
-        "role": user["role"] if user else "user"
-    })
-
-
-@app.route("/api/profile", methods=["PUT"])
-@require_auth
-def api_profile_update():
-    token = request.headers.get("Authorization")
-    username = get_username_from_token(token)
-    if not username:
-        return jsonify({"success": False, "message": "Unauthorized."}), 401
-    data = request.json or {}
-    fullname = data.get("fullname")
-    email = data.get("email")
-    password = data.get("password")
-    ok, err = db.update_user(username, fullname=fullname, email=email, password=password)
-    if not ok:
-        return jsonify({"success": False, "message": err}), 400
-    user = db.get_user_info(username)
-    return jsonify({"success": True, "message": "Profile updated.", "profile": user})
-
-
-@app.route("/api/call-history", methods=["GET"])
-@require_auth
-def api_call_history():
-    token = request.headers.get("Authorization")
-    username = get_username_from_token(token)
-    user = db.get_user_info(username) if username else None
-    history = db.get_call_history(limit=100)
-    if user and user.get("role") == "admin":
-        return jsonify({"success": True, "history": history})
-
-    filtered = [item for item in history if item["caller"] == username or item["callee"] == username]
-    return jsonify({"success": True, "history": filtered})
-
-
-# ============================================================
-# SOCKET.IO EVENTS
-# ============================================================
 
 @socketio.on("connect")
-def handle_connect():
-    emit("connected", {"message": "Connected to signaling server."})
-
-
-@socketio.on("join-room")
-def handle_join_room(data):
-    token = data.get("token")
-    room_id = data.get("room_id")
-    interpreter_mode = bool(data.get("interpreter_mode", False))
-
-    username = get_username_from_token(token)
+def on_connect(auth):
+    token = (auth or {}).get("token") if isinstance(auth, dict) else None
+    username = db.verify_session(token)
     if not username:
-        emit("room-error", {"message": "Unauthorized."})
-        return
+        return False
+    sid_to_user[request.sid] = username
+    print(f"[socket] connected: {username} ({request.sid})")
 
-    if not room_id:
-        emit("room-error", {"message": "Room ID is required."})
-        return
+
+@socketio.on("disconnect")
+def on_disconnect():
+    sid = request.sid
+    username = sid_to_user.pop(sid, None)
+    for room_id, members in list(room_members.items()):
+        if sid in members:
+            del members[sid]
+            emit("peer-left", {"sid": sid, "username": username}, room=room_id)
+            if not members:
+                db.end_call(room_id)
+                del room_members[room_id]
+    print(f"[socket] disconnected: {username} ({sid})")
+
+
+@socketio.on("join-call")
+def on_join_call(data):
+    room_id = data.get("room")
+    call_type = data.get("callType", "1on1")
+    username = sid_to_user.get(request.sid, "unknown")
+
+    if room_id not in room_members:
+        room_members[room_id] = {}
+        db.create_call(room_id, username, call_type)
+    else:
+        db.add_participant(room_id, username)
+
+    existing_peers = [{"sid": sid, "username": u} for sid, u in room_members[room_id].items()]
 
     join_room(room_id)
-    with call_lock:
-        call = active_calls.get(room_id, {
-            "room_id": room_id,
-            "participants": [],
-            "interpreter_mode": interpreter_mode,
-            "start_time": time.time()
-        })
+    room_members[room_id][request.sid] = username
 
-        if username not in call["participants"]:
-            call["participants"].append(username)
-        call["interpreter_mode"] = call["interpreter_mode"] or interpreter_mode
-        active_calls[room_id] = call
-
-    room_owner = call["participants"][0] if call["participants"] else username
-    emit("room-joined", {
-        "room_id": room_id,
-        "participants": call["participants"],
-        "interpreter_mode": call["interpreter_mode"],
-        "room_owner": room_owner
-    }, room=room_id)
+    emit("existing-peers", {"peers": existing_peers})
+    emit("peer-joined", {"sid": request.sid, "username": username}, room=room_id, include_self=False)
 
 
-@socketio.on("offer")
-def handle_offer(data):
-    target = data.get("target")
-    room_id = data.get("room_id")
-    if target and room_id:
-        emit("offer", data, room=room_id, include_self=False)
+@socketio.on("signal")
+def on_signal(data):
+    to_sid = data.get("to")
+    if not to_sid:
+        return
+    emit("signal", {
+        "from": request.sid,
+        "username": sid_to_user.get(request.sid, "unknown"),
+        "signal": data.get("signal"),
+    }, room=to_sid)
 
 
-@socketio.on("answer")
-def handle_answer(data):
-    target = data.get("target")
-    room_id = data.get("room_id")
-    if target and room_id:
-        emit("answer", data, room=room_id, include_self=False)
+@socketio.on("leave-call")
+def on_leave_call(data):
+    room_id = data.get("room")
+    username = sid_to_user.get(request.sid, "unknown")
+    leave_room(room_id)
+    if room_id in room_members and request.sid in room_members[room_id]:
+        del room_members[room_id][request.sid]
+        emit("peer-left", {"sid": request.sid, "username": username}, room=room_id)
+        if not room_members[room_id]:
+            db.end_call(room_id)
+            del room_members[room_id]
 
 
-@socketio.on("ice-candidate")
-def handle_ice_candidate(data):
-    room_id = data.get("room_id")
-    if room_id:
-        emit("ice-candidate", data, room=room_id, include_self=False)
+@socketio.on("sign-frame")
+def on_sign_frame(data):
+    room_id = data.get("room")
+    image_b64 = data.get("image")
+    username = sid_to_user.get(request.sid, "unknown")
 
-
-@socketio.on("interpreter-toggle")
-def handle_interpreter_toggle(data):
-    room_id = data.get("room_id")
-    enabled = bool(data.get("enabled", False))
-    if room_id:
-        with call_lock:
-            call = active_calls.get(room_id)
-            if call:
-                call["interpreter_mode"] = enabled
-                active_calls[room_id] = call
-        emit("interpreter-changed", {"enabled": enabled}, room=room_id)
-
-
-@socketio.on("camera-toggle")
-def handle_camera_toggle(data):
-    room_id = data.get("room_id")
-    enabled = bool(data.get("enabled", False))
-    # broadcast to other participants so they can update UI
-    if room_id:
-        emit("camera-changed", {"room_id": room_id, "enabled": enabled}, room=room_id, include_self=False)
-
-
-@socketio.on("mic-toggle")
-def handle_mic_toggle(data):
-    room_id = data.get("room_id")
-    enabled = bool(data.get("enabled", False))
-    if room_id:
-        emit("mic-changed", {"room_id": room_id, "enabled": enabled}, room=room_id, include_self=False)
-
-
-@socketio.on("end-call")
-def handle_end_call(data):
-    token = data.get("token")
-    room_id = data.get("room_id")
-    username = get_username_from_token(token)
-    if not username or not room_id:
+    if not image_b64:
         return
 
-    leave_room(room_id)
-    with call_lock:
-        call = active_calls.pop(room_id, None)
-
-    if call:
-        participants = call.get("participants", [])
-        start_time = call.get("start_time", time.time())
-        end_time = time.time()
-        duration = int(end_time - start_time)
-
-        caller = participants[0] if len(participants) > 0 else username
-        callee = participants[1] if len(participants) > 1 else username
-
-        db.save_call_history(room_id, caller, callee, call.get("interpreter_mode", False),
-                             time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
-                             time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)),
-                             duration)
-
-    emit("call-ended", {"room_id": room_id}, room=room_id)
+    word, confidence = predict_sign_from_b64(image_b64)
+    if word and confidence >= 55:
+        emit("sign-caption", {
+            "username": username,
+            "text": word,
+            "confidence": round(confidence, 1),
+        }, room=room_id)
 
 
-@app.route("/api/record", methods=["POST"])
-@require_auth
-def api_record():
-    data     = request.json or {}
-    sign     = data.get("sign")
-    features = data.get("features")
-
-    if not sign or not features or len(features) != 126:
-        return jsonify({"success": False,
-                        "message": "Sign label and 126 landmark features are required."}), 400
-
-    db.insert_sample(sign, features)
-    return jsonify({"success": True, "message": f"Sample recorded for sign {sign}."})
-
-
-@app.route("/api/predict", methods=["POST"])
-@require_auth
-def api_predict():
-    if not model_cache["loaded"] and not load_cached_model():
-        return jsonify({"success": False,
-                        "message": "No trained model found. Please train the model first."}), 400
-
-    data     = request.json or {}
-    features = data.get("features")
-
-    if not features or len(features) != 126:
-        return jsonify({"success": False,
-                        "message": "Features array must contain exactly 126 values."}), 400
-
-    try:
-        tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
-        with torch.no_grad():
-            output = model_cache["model"](tensor)
-            probs  = torch.softmax(output, dim=1).cpu().numpy()[0]
-            idx    = int(output.argmax(1).item())
-
-        classes    = model_cache["classes"]
-        pred_class = classes[idx]
-        confidence = float(probs[idx])
-        prob_map   = {cls: float(p) for cls, p in zip(classes, probs)}
-
-        return jsonify({
-            "success":       True,
-            "predicted_class": str(pred_class),
-            "confidence":    confidence,
-            "probabilities": prob_map
-        })
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Inference error: {e}"}), 500
-
-
-@app.route("/api/train", methods=["POST"])
-@require_auth
-def api_train():
-    global training_state
-
-    with training_lock:
-        if training_state["is_training"]:
-            return jsonify({"success": False, "message": "Training already in progress."}), 400
-
-        samples = db.get_all_samples()
-        if not samples:
-            return jsonify({"success": False,
-                            "message": "No training data found. Record samples first."}), 400
-
-        if len(set(s["label"] for s in samples)) < 2:
-            return jsonify({"success": False,
-                            "message": "Record at least 2 different signs before training."}), 400
-
-        cfg        = request.json or {}
-        epochs     = cfg.get("epochs",     200)
-        batch_size = cfg.get("batch_size",  32)
-        lr         = cfg.get("lr",        0.001)
-
-        training_state.update({
-            "is_training":   True,
-            "current_epoch": 0,
-            "total_epochs":  epochs,
-            "last_loss":     0.0,
-            "best_accuracy": 0.0,
-            "logs":          ["Initializing training pipeline..."],
-            "error_message": None
-        })
-
-        threading.Thread(target=training_worker,
-                         args=(samples, epochs, batch_size, lr)).start()
-
-        return jsonify({"success": True, "message": "Training started."})
-
-
-# ============================================================
-# BACKGROUND TRAINING WORKER
-# ============================================================
-def training_worker(samples, epochs, batch_size, lr_rate):
-    global training_state
-
-    try:
-        def log(msg):
-            print(msg)
-            training_state["logs"].append(msg)
-            if len(training_state["logs"]) > 1000:
-                training_state["logs"].pop(0)
-
-        log("=" * 45)
-        log("  ISL Training Pipeline")
-        log("=" * 45)
-        log(f"Samples from DB: {len(samples)}")
-
-        classes      = sorted(set(item["label"] for item in samples))
-        label_to_idx = {lbl: i for i, lbl in enumerate(classes)}
-
-        log("Augmenting data (100x)...")
-        all_feats, all_labels = [], []
-        for item in samples:
-            feat = np.array(item["features"], dtype=np.float32)
-            idx  = label_to_idx[item["label"]]
-            all_feats.append(feat);  all_labels.append(idx)
-            for aug in augment_landmarks(feat):
-                all_feats.append(aug); all_labels.append(idx)
-
-        log(f"Total after augmentation: {len(all_feats)}")
-        log("Splitting 80/20 train/test...")
-
-        X = np.array(all_feats, dtype=np.float32)
-        y = np.array(all_labels)
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y)
-
-        num_classes  = len(classes)
-        feature_size = X_train.shape[1]
-        log(f"Classes: {num_classes} → {classes}")
-
-        X_tr = torch.tensor(X_train).float()
-        X_te = torch.tensor(X_test).float()
-        y_tr = torch.tensor(y_train).long()
-        y_te = torch.tensor(y_test).long()
-
-        counts   = np.bincount(y_train.astype(int), minlength=num_classes)
-        w_sample = (1.0 / np.maximum(counts, 1))[y_train.astype(int)]
-        sampler  = WeightedRandomSampler(torch.tensor(w_sample).float(),
-                                         len(w_sample), replacement=True)
-
-        train_loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=batch_size, sampler=sampler)
-        test_loader  = DataLoader(TensorDataset(X_te, y_te), batch_size=batch_size, shuffle=False)
-
-        model     = LandmarkMLP(feature_size, num_classes).to(device)
-        criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr_rate, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-
-        best_acc        = 0.0
-        final_loss      = 0.0
-        weights_name    = f"landmark_mlp_{int(time.time())}.pth"
-        best_path       = os.path.join(MODEL_PATH, weights_name)
-
-        log(f"\nTraining {epochs} epochs on {device.type.upper()}")
-        log(f"  {'Ep':>5}  {'Loss':>8}  {'Train%':>7}  {'Val%':>7}  Note")
-        log(f"  {'-'*45}")
-
-        for epoch in range(1, epochs + 1):
-            model.train()
-            t_loss = t_corr = t_tot = 0
-            for X, y in train_loader:
-                X, y = X.to(device), y.to(device)
-                optimizer.zero_grad()
-                out  = model(X)
-                loss = criterion(out, y)
-                loss.backward(); optimizer.step()
-                t_loss += loss.item()
-                t_corr += (out.argmax(1) == y).sum().item()
-                t_tot  += y.size(0)
-
-            train_acc = t_corr / t_tot * 100
-
-            model.eval(); v_corr = v_tot = 0
-            with torch.no_grad():
-                for X, y in test_loader:
-                    X, y = X.to(device), y.to(device)
-                    v_corr += (model(X).argmax(1) == y).sum().item()
-                    v_tot  += y.size(0)
-
-            val_acc    = v_corr / v_tot * 100
-            scheduler.step()
-            final_loss = t_loss / len(train_loader)
-
-            note = ""
-            if val_acc > best_acc:
-                best_acc = val_acc
-                torch.save({"model_state": model.state_dict()}, best_path)
-                note = f"★ best {val_acc:.2f}%"
-
-            training_state["current_epoch"] = epoch
-            training_state["last_loss"]     = final_loss
-            training_state["best_accuracy"] = best_acc
-
-            if epoch % 20 == 0 or epoch == 1 or note:
-                log(f"  {epoch:>5}  {final_loss:>8.4f}  {train_acc:>7.2f}  {val_acc:>7.2f}  {note}")
-
-        log(f"\nDone! Best accuracy: {best_acc:.2f}%")
-        log(f"Weights saved: models/{weights_name}")
-        log("=" * 45)
-
-        db.save_model_run(epochs, batch_size, lr_rate, best_acc, final_loss,
-                          feature_size, classes, weights_name)
-        load_cached_model()
-
-    except Exception as e:
-        training_state["error_message"] = str(e)
-        print(f"Training error: {e}")
-    finally:
-        with training_lock:
-            training_state["is_training"] = False
-
-
-# ============================================================
-# RUN
-# ============================================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    debug_mode = os.environ.get("DEBUG", "false").lower() in ("true", "1")
-
-    print("\n" + "=" * 55)
-    print("  ISL Sign Platform  (SQL backend)")
-    print("=" * 55)
-    print(f"  URL      : http://0.0.0.0:{port}")
-    print(f"  Device   : {device.type.upper()}")
-    print(f"  Database : {db.DB_PATH}")
-    print("=" * 55 + "\n")
-    socketio.run(app, host="0.0.0.0", port=port, debug=debug_mode)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)

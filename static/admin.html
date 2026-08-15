@@ -1,0 +1,204 @@
+<!-- admin.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISL Platform — Admin Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-icon"><i class="fa-solid fa-user-shield"></i></div>
+                <div>
+                    <h1>Admin Dashboard</h1>
+                    <p>ISL Platform Administration</p>
+                </div>
+            </div>
+
+            <div class="top-actions">
+                <div class="user-dropdown">
+                    <button class="user-pill" id="userPillBtn">
+                        <i class="fa-solid fa-circle-user"></i>
+                        <span id="adminUsernameLabel">Admin</span>
+                        <span class="user-role">admin</span>
+                        <i class="fa-solid fa-chevron-down dropdown-caret"></i>
+                    </button>
+                    <div class="dropdown-menu" id="userDropdownMenu">
+                        <a href="#recording" class="dropdown-item"><i class="fa-solid fa-hand"></i> Manage Signs</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="#" class="dropdown-item" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="admin-banner">
+            <i class="fa-solid fa-shield-halved"></i>
+            <span>You're viewing the administration console. Changes here affect all users.</span>
+        </div>
+
+        <main class="dashboard-content">
+
+            <!-- Platform stats -->
+            <section class="glass-panel stats-card">
+                <div class="panel-header">
+                    <h3>Platform Overview</h3>
+                    <p>Live counts across users, calls, and the sign-recognition model</p>
+                </div>
+                <div class="panel-body">
+                    <div class="stats-grid-inner">
+                        <div class="stat-widget">
+                            <span class="stat-value" id="statUsers">-</span>
+                            <span class="stat-text">Total Users</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="statCalls">-</span>
+                            <span class="stat-text">Total Calls</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="statActive">-</span>
+                            <span class="stat-text">Active Calls</span>
+                        </div>
+                        <div class="stat-widget">
+                            <span class="stat-value" id="statSamples">-</span>
+                            <span class="stat-text">Recorded Samples</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sign recording + training -->
+            <section class="call-grid" id="recording">
+                <div class="glass-panel video-card">
+                    <div class="panel-header">
+                        <h3>Record a Sign</h3>
+                        <p>Capture varied poses, positions and lighting. Aim for 20+ samples per sign before training.</p>
+                    </div>
+                    <div class="panel-body">
+                        <div class="camera-card" id="cameraCard">
+                            <video id="preview" autoplay playsinline muted></video>
+                            <canvas id="captureCanvas" style="display:none;"></canvas>
+                        </div>
+
+                        <div class="control-grid-2" style="margin-top: 4px;">
+                            <div class="control-item">
+                                <label for="signLabel">Sign label</label>
+                                <input id="signLabel" type="text" class="text-input" placeholder="e.g. hello, thank_you, water">
+                            </div>
+                            <div class="control-item">
+                                <label>&nbsp;</label>
+                                <button id="captureBtn" class="btn-primary"><i class="fa-solid fa-hand"></i> Capture Sample</button>
+                            </div>
+                        </div>
+
+                        <div class="switch-row">
+                            <span>Burst mode (capture every 500ms; duplicates are skipped)</span>
+                            <label class="switch">
+                                <input type="checkbox" id="burstToggle">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="switch-row">
+                            <span>Auto-train after recording</span>
+                            <label class="switch">
+                                <input type="checkbox" id="autoTrainToggle" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div id="captureStatus" class="capture-status"></div>
+                        <div id="autoTrainStatus" class="capture-status"></div>
+                    </div>
+                </div>
+
+                <div class="glass-panel call-card">
+                    <div class="panel-header panel-header-flex">
+                        <div>
+                            <h3>Recorded Signs</h3>
+                            <p>Samples stored per sign, ready for training</p>
+                        </div>
+                        <span class="badge-pill" id="sampleTotalBadge">0 total</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="history-panel">
+                            <table class="history-table">
+                                <thead>
+                                    <tr><th>Sign</th><th>Samples</th><th></th></tr>
+                                </thead>
+                                <tbody id="sampleCountsBody">
+                                    <tr><td colspan="3" class="history-empty">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="summary-block" style="margin-top: 18px;">
+                            <div>
+                                <strong>Manual retrain</strong>
+                                <p>Force a retrain right now, in addition to auto-training</p>
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:flex-end;">
+                                <button id="trainBtn" class="btn-primary"><i class="fa-solid fa-bolt"></i> Train Now</button>
+                            </div>
+                        </div>
+
+                        <div id="trainResult" class="train-result"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Users table -->
+            <section class="glass-panel call-card">
+                <div class="panel-header">
+                    <h3>Registered Users</h3>
+                    <p>Everyone who has signed up on the platform</p>
+                </div>
+                <div class="panel-body">
+                    <div class="history-panel">
+                        <table class="history-table">
+                            <thead>
+                                <tr><th>Username</th><th>Full Name</th><th>Email</th><th>Role</th><th>Joined</th></tr>
+                            </thead>
+                            <tbody id="usersTableBody">
+                                <tr><td colspan="5" class="history-empty">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Calls table -->
+            <section class="glass-panel call-card">
+                <div class="panel-header">
+                    <h3>All Calls</h3>
+                    <p>Every call started across the platform</p>
+                </div>
+                <div class="panel-body">
+                    <div class="history-panel">
+                        <table class="history-table">
+                            <thead>
+                                <tr><th>Room</th><th>Type</th><th>Host</th><th>Participants</th><th>Started</th><th>Status</th></tr>
+                            </thead>
+                            <tbody id="callsTableBody">
+                                <tr><td colspan="6" class="history-empty">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

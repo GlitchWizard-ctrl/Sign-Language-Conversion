@@ -1,17 +1,13 @@
 """
 db.py — SQLite data access layer for the ISL Sign Recognition Platform.
-
-Tables:
-    users        - login credentials (hashed passwords, email, full name)
-    sessions     - active login tokens
-    samples      - recorded hand-landmark training samples
-    model_runs   - metadata for each trained model
 """
 
 import os
 import json
 import secrets
 import sqlite3
+import numpy as np
+from datetime import datetime
 from contextlib import contextmanager
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -34,7 +30,6 @@ def get_connection():
 
 
 def init_db():
-    """Create all tables and seed a default admin user on first run."""
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -76,19 +71,50 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS call_history (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_id           TEXT NOT NULL,
-                caller            TEXT NOT NULL,
-                callee            TEXT NOT NULL,
-                interpreter_mode  INTEGER NOT NULL DEFAULT 0,
-                start_time        TIMESTAMP NOT NULL,
-                end_time          TIMESTAMP NOT NULL,
-                duration_seconds  INTEGER NOT NULL,
-                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id         TEXT NOT NULL,
+                call_type       TEXT NOT NULL DEFAULT '1on1',
+                host_username   TEXT NOT NULL,
+                participants    TEXT NOT NULL DEFAULT '[]',
+                started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at        TIMESTAMP,
+                duration_secs   INTEGER
             );
         """)
 
-        # Seed default admin user only if users table is empty
+        # Early versions stored calls with caller/callee/start_time columns.
+        # Preserve those records while upgrading to the room-based call schema.
+        call_columns = {row["name"] for row in conn.execute("PRAGMA table_info(call_history)")}
+        required_call_columns = {"room_id", "call_type", "host_username", "participants", "started_at", "ended_at", "duration_secs"}
+        if not required_call_columns.issubset(call_columns):
+            legacy_rows = conn.execute("SELECT * FROM call_history").fetchall()
+            conn.execute("ALTER TABLE call_history RENAME TO call_history_legacy")
+            conn.execute("""
+                CREATE TABLE call_history (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    room_id         TEXT NOT NULL,
+                    call_type       TEXT NOT NULL DEFAULT '1on1',
+                    host_username   TEXT NOT NULL,
+                    participants    TEXT NOT NULL DEFAULT '[]',
+                    started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at        TIMESTAMP,
+                    duration_secs   INTEGER
+                )
+            """)
+            for row in legacy_rows:
+                keys = set(row.keys())
+                host = row["caller"] if "caller" in keys else "unknown"
+                callee = row["callee"] if "callee" in keys else host
+                started = row["start_time"] if "start_time" in keys else row["created_at"]
+                ended = row["end_time"] if "end_time" in keys else None
+                duration = row["duration_seconds"] if "duration_seconds" in keys else None
+                conn.execute(
+                    """INSERT INTO call_history
+                       (room_id, call_type, host_username, participants, started_at, ended_at, duration_secs)
+                       VALUES (?, '1on1', ?, ?, ?, ?, ?)""",
+                    (row["room_id"], host, json.dumps([host, callee]), started, ended, duration)
+                )
+
         row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
         if row["c"] == 0:
             conn.execute(
@@ -104,15 +130,9 @@ def init_db():
 # -----------------------------------------------------------------------
 
 def register_user(fullname, email, username, password):
-    """
-    Register a new user. Returns (True, None) on success or
-    (False, error_message) if the username or email already exists.
-    """
     with get_connection() as conn:
-        # Check for duplicate username
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
             return False, "Username already taken. Please choose another."
-        # Check for duplicate email
         if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
             return False, "An account with this email already exists."
 
@@ -125,7 +145,6 @@ def register_user(fullname, email, username, password):
 
 
 def verify_user(username, password):
-    """Return True if username + password are correct."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT password_hash FROM users WHERE username = ?", (username,)
@@ -134,43 +153,22 @@ def verify_user(username, password):
 
 
 def get_user_info(username):
-    """Return basic user info dict or None."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT fullname, email, role FROM users WHERE username = ?", (username,)
         ).fetchone()
         if row:
-            return {"fullname": row["fullname"], "email": row["email"], "role": row["role"]}
+            return {"fullname": row["fullname"], "email": row["email"], "role": row["role"], "username": username}
         return None
 
 
-    def update_user(username, fullname=None, email=None, password=None):
-        """Update user profile fields. Returns True on success."""
-        with get_connection() as conn:
-            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
-            if not row:
-                return False, "User not found."
-            fields = []
-            params = []
-            if fullname is not None:
-                fields.append("fullname = ?"); params.append(fullname)
-            if email is not None:
-                fields.append("email = ?"); params.append(email)
-            if password is not None:
-                fields.append("password_hash = ?"); params.append(generate_password_hash(password))
-            if not fields:
-                return True, None
-            params.append(username)
-            sql = f"UPDATE users SET {', '.join(fields)} WHERE username = ?"
-            try:
-                conn.execute(sql, tuple(params))
-                return True, None
-            except Exception as e:
-                return False, str(e)
+def get_user_role(username):
+    with get_connection() as conn:
+        row = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()
+        return row["role"] if row else None
 
 
 def create_session(username):
-    """Issue a new session token for a logged-in user."""
     token = secrets.token_hex(24)
     with get_connection() as conn:
         conn.execute(
@@ -181,7 +179,6 @@ def create_session(username):
 
 
 def verify_session(token):
-    """Return the username if the session token is valid, else None."""
     if not token:
         return None
     with get_connection() as conn:
@@ -208,6 +205,20 @@ def insert_sample(sign_label, features):
         )
 
 
+def has_near_duplicate(sign_label, features, threshold=0.035):
+    """Check recent samples only; this keeps capture responsive as data grows."""
+    candidate = np.asarray(features, dtype=float)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT features FROM samples WHERE sign_label = ? ORDER BY id DESC LIMIT 40", (sign_label,)
+        ).fetchall()
+    for row in rows:
+        previous = np.asarray(json.loads(row["features"]), dtype=float)
+        if previous.shape == candidate.shape and float(np.mean((previous - candidate) ** 2) ** 0.5) < threshold:
+            return True
+    return False
+
+
 def get_all_samples():
     with get_connection() as conn:
         rows = conn.execute("SELECT sign_label, features FROM samples").fetchall()
@@ -217,6 +228,25 @@ def get_all_samples():
 def count_samples():
     with get_connection() as conn:
         return conn.execute("SELECT COUNT(*) AS c FROM samples").fetchone()["c"]
+
+
+def get_sample_counts():
+    """Returns {label: count} for every recorded sign, sorted by label."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT sign_label, COUNT(*) AS c FROM samples GROUP BY sign_label ORDER BY sign_label"
+        ).fetchall()
+        return {r["sign_label"]: r["c"] for r in rows}
+
+
+def delete_samples_by_label(label):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM samples WHERE sign_label = ?", (label,))
+
+
+def clear_all_samples():
+    with get_connection() as conn:
+        conn.execute("DELETE FROM samples")
 
 
 # -----------------------------------------------------------------------
@@ -260,30 +290,92 @@ def get_active_model_run():
 # CALL HISTORY
 # -----------------------------------------------------------------------
 
-def save_call_history(room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds):
+def create_call(room_id, host_username, call_type="1on1"):
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM call_history WHERE room_id = ? AND ended_at IS NULL", (room_id,)
+        ).fetchone()
+        if existing:
+            return existing["id"]
+        cur = conn.execute(
+            """INSERT INTO call_history (room_id, call_type, host_username, participants)
+               VALUES (?, ?, ?, ?)""",
+            (room_id, call_type, host_username, json.dumps([host_username]))
+        )
+        return cur.lastrowid
+
+
+def add_participant(room_id, username):
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, participants FROM call_history WHERE room_id = ? AND ended_at IS NULL",
+            (room_id,)
+        ).fetchone()
+        if not row:
+            return
+        parts = json.loads(row["participants"])
+        if username not in parts:
+            parts.append(username)
         conn.execute(
-            "INSERT INTO call_history (room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (room_id, caller, callee, int(interpreter_mode), start_time, end_time, duration_seconds)
+            "UPDATE call_history SET participants = ? WHERE id = ?",
+            (json.dumps(parts), row["id"])
         )
 
 
-def get_call_history(limit=50):
+def end_call(room_id):
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, started_at FROM call_history WHERE room_id = ? AND ended_at IS NULL",
+            (room_id,)
+        ).fetchone()
+        if not row:
+            return
+        started = datetime.fromisoformat(row["started_at"])
+        duration = int((datetime.utcnow() - started).total_seconds())
+        conn.execute(
+            "UPDATE call_history SET ended_at = CURRENT_TIMESTAMP, duration_secs = ? WHERE id = ?",
+            (duration, row["id"])
+        )
+
+
+def get_call_history(username):
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT room_id, caller, callee, interpreter_mode, start_time, end_time, duration_seconds, created_at FROM call_history ORDER BY created_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM call_history ORDER BY started_at DESC LIMIT 200"
         ).fetchall()
-        return [
-            {
-                "room_id": r["room_id"],
-                "caller": r["caller"],
-                "callee": r["callee"],
-                "interpreter_mode": bool(r["interpreter_mode"]),
-                "start_time": r["start_time"],
-                "end_time": r["end_time"],
-                "duration_seconds": r["duration_seconds"],
-                "created_at": r["created_at"]
-            }
-            for r in rows
-        ]
+        result = []
+        for r in rows:
+            parts = json.loads(r["participants"])
+            if username in parts or r["host_username"] == username:
+                result.append({
+                    "room_id": r["room_id"],
+                    "call_type": r["call_type"],
+                    "host_username": r["host_username"],
+                    "participants": parts,
+                    "started_at": r["started_at"],
+                    "ended_at": r["ended_at"],
+                    "duration_secs": r["duration_secs"],
+                })
+        return result
+
+
+def get_all_calls():
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM call_history ORDER BY started_at DESC LIMIT 500").fetchall()
+        return [{
+            "room_id": r["room_id"],
+            "call_type": r["call_type"],
+            "host_username": r["host_username"],
+            "participants": json.loads(r["participants"]),
+            "started_at": r["started_at"],
+            "ended_at": r["ended_at"],
+            "duration_secs": r["duration_secs"],
+        } for r in rows]
+
+
+def get_all_users():
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, fullname, email, username, role, created_at FROM users ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]

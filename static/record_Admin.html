@@ -1,0 +1,72 @@
+<!-- record_Admin.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISL Platform — Manage Signs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar admin-topbar">
+            <div class="brand"><i class="fa-solid fa-hands-asl-interpreting"></i> <span>Manage Signs</span></div>
+            <div class="topbar-right">
+                <a href="admin.html" class="btn-ghost"><i class="fa-solid fa-arrow-left"></i> Dashboard</a>
+                <button id="logoutBtn" class="btn-ghost"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+            </div>
+        </header>
+
+        <main class="record-main">
+            <section class="card glass-panel record-card">
+                <h3><i class="fa-solid fa-camera"></i> Record a Sign</h3>
+
+                <video id="preview" autoplay playsinline muted></video>
+
+                <div class="form-group" style="margin-top:16px;">
+                    <label for="signLabel">Sign label</label>
+                    <input id="signLabel" type="text" class="form-input" placeholder="e.g. hello, thank_you, water">
+                </div>
+
+                <div class="record-actions">
+                    <button id="captureBtn" class="btn-primary"><i class="fa-solid fa-hand"></i> Capture Sample</button>
+                    <label class="switch-label" style="margin-left:auto;">
+                        <input type="checkbox" id="burstToggle">
+                        Burst mode (auto-capture every 500ms)
+                    </label>
+                </div>
+
+                <div class="record-actions" style="margin-top: 4px;">
+                    <label class="switch-label">
+                        <input type="checkbox" id="autoTrainToggle" checked>
+                        Auto-train after recording
+                    </label>
+                </div>
+
+                <div id="captureStatus" class="capture-status"></div>
+                <div id="autoTrainStatus" class="capture-status"></div>
+            </section>
+
+            <section class="card glass-panel">
+                <h3><i class="fa-solid fa-list-check"></i> Recorded Signs</h3>
+                <div id="sampleCounts" class="counts-list">
+                    <p class="muted">Loading...</p>
+                </div>
+            </section>
+
+            <section class="card glass-panel train-card">
+                <h3><i class="fa-solid fa-brain"></i> Train Model</h3>
+                <p class="muted">Auto-trains a few seconds after you stop recording. Use this to force a retrain on demand — replaces the live model instantly, no restart needed.</p>
+                <button id="trainBtn" class="btn-primary"><i class="fa-solid fa-bolt"></i> Train Now</button>
+                <div id="trainResult" class="train-result"></div>
+            </section>
+        </main>
+    </div>
+
+    <canvas id="captureCanvas" style="display:none;"></canvas>
+    <script src="record_Admin.js"></script>
+</body>
+</html>

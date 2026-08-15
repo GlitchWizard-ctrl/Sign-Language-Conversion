@@ -32,7 +32,7 @@
                     </button>
                     <div class="dropdown-menu" id="userMenu" aria-hidden="true">
                         <a href="profile.html" class="dropdown-item">Profile</a>
-                        <a href="#" id="openHistory" class="dropdown-item">Call history</a>
+                        <a href="history.html" class="dropdown-item">Call history</a>
                         <a href="settings.html" class="dropdown-item">Settings</a>
                         <div class="dropdown-divider"></div>
                         <button id="signOutBtn" class="dropdown-item logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</button>
@@ -45,76 +45,48 @@
         </header>
 
         <main class="dashboard-content">
-            <section class="call-grid">
-                <div class="glass-panel call-card">
-                    <div class="panel-header panel-header-flex">
-                        <div>
-                            <h3>Call control</h3>
-                            <p>Create a room, join someone, and manage the call.</p>
-                        </div>
-                        <div class="status-pill status-pill-disconnected" id="connectionStatus">Disconnected</div>
+            <section class="glass-panel call-card">
+                <div class="panel-header panel-header-flex">
+                    <div>
+                        <h3>Call control</h3>
+                        <p>Create a room, join someone, and manage the call.</p>
                     </div>
-                    <div class="panel-body">
-                        <div class="control-grid-2">
-                            <div class="control-item">
-                                <label for="roomIdInput">Room code</label>
-                                <input id="roomIdInput" class="text-input" placeholder="Enter a room code" />
-                            </div>
-                            <div class="control-item">
-                                <label>&nbsp;</label>
-                                <div style="display:flex; gap:8px;">
-                                  <button id="startRoomBtn" class="btn-primary">Start Call</button>
-                                  <button id="joinRoomBtn" class="btn-secondary">Join Call</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="toggle-grid">
-                            <div class="switch-block">
-                                <span>Live converter</span>
-                                <label class="switch"><input type="checkbox" id="converterSwitch" checked /><span class="slider"></span></label>
-                            </div>
-                        </div>
-
-                        <div class="summary-block">
-                            <div>
-                                <strong>Active room</strong>
-                                <p id="activeRoomLabel">None</p>
-                            </div>
-                            <div>
-                                <strong>Converter</strong>
-                                <p id="converterLabel">On</p>
-                            </div>
-                        </div>
-
-                        <!-- Top call buttons removed — overlay controls next to video are primary -->
-                    </div>
+                    <div class="status-pill status-pill-disconnected" id="connectionStatus">Disconnected</div>
                 </div>
-
-                <div class="glass-panel call-card">
-                    <div class="panel-header panel-header-flex">
-                        <div>
-                            <h3>Call history</h3>
-                            <p>Recent calls with converter flag and duration.</p>
+                <div class="panel-body">
+                    <div class="control-grid-2">
+                        <div class="control-item">
+                            <label for="roomIdInput">Room code</label>
+                            <input id="roomIdInput" class="text-input" placeholder="Enter a room code" />
                         </div>
-                        <button id="refreshHistoryBtn" class="btn-secondary"><i class="fa-solid fa-arrows-rotate"></i></button>
+                        <div class="control-item">
+                            <label>&nbsp;</label>
+                            <div style="display:flex; gap:8px;">
+                              <button id="startRoomBtn" class="btn-primary">Start Call</button>
+                              <button id="joinRoomBtn" class="btn-secondary">Join Call</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="panel-body history-panel">
-                        <table class="history-table">
-                            <thead>
-                                <tr>
-                                    <th>Room</th>
-                                    <th>Caller</th>
-                                    <th>Callee</th>
-                                    <th>Converter</th>
-                                    <th>Duration</th>
-                                </tr>
-                            </thead>
-                            <tbody id="historyBody">
-                                <tr><td colspan="5" class="history-empty">No recent calls yet.</td></tr>
-                            </tbody>
-                        </table>
+
+                    <div class="toggle-grid">
+                        <div class="switch-block">
+                            <span>Live converter</span>
+                            <label class="switch"><input type="checkbox" id="converterSwitch" checked /><span class="slider"></span></label>
+                        </div>
                     </div>
+
+                    <div class="summary-block">
+                        <div>
+                            <strong>Active room</strong>
+                            <p id="activeRoomLabel">None</p>
+                        </div>
+                        <div>
+                            <strong>Converter</strong>
+                            <p id="converterLabel">On</p>
+                        </div>
+                    </div>
+
+                    <!-- Top call buttons removed — overlay controls next to video are primary -->
                 </div>
             </section>
 

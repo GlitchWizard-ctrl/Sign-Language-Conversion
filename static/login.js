@@ -1,3 +1,4 @@
+// login.js
 document.addEventListener("DOMContentLoaded", () => {
     const loginForm = document.getElementById("loginForm");
     const alertMessage = document.getElementById("alertMessage");
@@ -29,11 +30,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
             if (response.ok && data.success) {
                 localStorage.setItem("authToken", data.token);
-                localStorage.setItem("username", username);
-                localStorage.setItem("fullname", data.fullname);
-                localStorage.setItem("role", data.role);
+                const user = data.user;
+                localStorage.setItem("username", user.username);
+                localStorage.setItem("fullname", user.fullname);
+                localStorage.setItem("role", user.role);
                 document.cookie = `authToken=${data.token}; path=/`;
-                window.location.href = "index.html";
+                window.location.href = user.role === "admin" ? "admin.html" : "index.html";
             } else {
                 showError(data.message || "Invalid credentials. Please try again.");
             }
@@ -51,11 +53,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!authToken) return;
 
         try {
-            const response = await fetch("/api/profile", {
-                headers: { "Authorization": authToken }
+            const response = await fetch("/api/session", {
+                headers: { "Authorization": `Bearer ${authToken}` }
             });
             if (response.ok) {
-                window.location.href = "index.html";
+                const user = (await response.json()).user;
+                localStorage.setItem("role", user.role);
+                localStorage.setItem("username", user.username);
+                window.location.href = user.role === "admin" ? "admin.html" : "index.html";
                 return;
             }
         } catch (err) {

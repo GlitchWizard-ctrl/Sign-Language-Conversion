@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Sign Call — Sign Up</title>
+    <title>ISL Sign Recognition — Create Account</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-zNHRP3r2xzdtC3VwQf1n8EA5dM2z4Jm2cqTZ+q+K5f6s0w3KkW6MkA9zW7rJfEEdE2mLh6h6v7E2o4e6hjGw1A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="auth-page">
-        <section class="auth-panel glass-panel auth-panel-wide">
+        <div class="auth-panel auth-panel-wide">
             <div class="brand-mark">
                 <i class="fa-solid fa-hands-asl-interpreting"></i>
             </div>
-            <h1>Create your account</h1>
-            <p>Start a live video call with sign language conversion and optional interpreter mode.</p>
+            <h1>Create Account</h1>
+            <p>Join the ISL Sign Recognition Platform</p>
 
             <div id="alertMessage" class="alert-message alert-error">
                 <i class="fa-solid fa-triangle-exclamation"></i>
@@ -32,54 +32,58 @@
                 <div class="form-group">
                     <label for="fullname">Full Name</label>
                     <div class="input-wrapper">
-                        <input type="text" id="fullname" class="form-input" placeholder="Full name" required>
                         <i class="fa-solid fa-id-card"></i>
+                        <input type="text" id="fullname" class="form-input" placeholder="Enter your full name" required autocomplete="name">
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label for="email">Email</label>
+                    <label for="email">Email Address</label>
                     <div class="input-wrapper">
-                        <input type="email" id="email" class="form-input" placeholder="Email address" required>
                         <i class="fa-solid fa-envelope"></i>
+                        <input type="email" id="email" class="form-input" placeholder="Enter your email" required autocomplete="email">
                     </div>
                 </div>
 
                 <div class="form-group">
                     <label for="username">Username</label>
                     <div class="input-wrapper">
-                        <input type="text" id="username" class="form-input" placeholder="Username" required>
                         <i class="fa-solid fa-user"></i>
+                        <input type="text" id="username" class="form-input" placeholder="Choose a username" required minlength="3" autocomplete="username">
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <div class="input-wrapper">
-                        <input type="password" id="password" class="form-input" placeholder="Password" required>
-                        <i class="fa-solid fa-lock"></i>
+                <div class="control-grid-2">
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-lock"></i>
+                            <input type="password" id="password" class="form-input" placeholder="Min. 6 characters" required minlength="6" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-shield-halved"></i>
+                            <input type="password" id="confirmPassword" class="form-input" placeholder="Repeat password" required autocomplete="new-password">
+                        </div>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="confirmPassword">Confirm Password</label>
-                    <div class="input-wrapper">
-                        <input type="password" id="confirmPassword" class="form-input" placeholder="Confirm password" required>
-                        <i class="fa-solid fa-shield-halved"></i>
-                    </div>
+                <div id="passwordHint" class="capture-status">
+                    <i class="fa-solid fa-circle-info"></i> Use at least 6 characters.
                 </div>
 
-                <button type="submit" id="submitBtn" class="login-btn">
+                <button type="submit" id="submitBtn" class="btn-primary" style="width: 100%; justify-content: center; display: flex; align-items: center; gap: 10px; padding: 15px 18px; font-size: 15px;">
                     <span>Create Account</span>
                 </button>
             </form>
 
             <div class="auth-footer">
-                Already registered? <a href="login.html">Sign in here</a>
+                Already have an account? <a href="login.html">Sign in</a>
             </div>
-        </section>
+        </div>
     </div>
-
     <script src="register.js"></script>
 </body>
 </html>

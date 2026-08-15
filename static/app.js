@@ -10,8 +10,8 @@ let peerConnection = null;
 let dataChannel = null;
 let roomId = null;
 let isCaller = false;
-let isCameraOn = true;
-let isMicOn = true;
+let isCameraOn = false;
+let isMicOn = false;
 let converterEnabled = true;
 let lastPredictionTime = 0;
 const MIN_PREDICT_INTERVAL = 200;
@@ -56,7 +56,6 @@ const overlayToggleMic = document.getElementById('overlayToggleMic');
 const overlayInterpreterBtn = document.getElementById('overlayInterpreterBtn');
 const overlayFullscreenBtn = document.getElementById('overlayFullscreenBtn');
 const overlayEndCallBtn = document.getElementById('overlayEndCallBtn');
-const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
 const converterSwitch = document.getElementById('converterSwitch');
 const converterLabel = document.getElementById('converterLabel');
 // audio (text-to-speech) toggle — optional, only wired up if present in HTML
@@ -68,11 +67,9 @@ const usernameLabel = document.getElementById('usernameLabel');
 const userRoleLabel = document.getElementById('userRoleLabel');
 const adminBanner = document.getElementById('adminBanner');
 const signOutBtn = document.getElementById('signOutBtn');
-const historyBody = document.getElementById('historyBody');
 // user dropdown elements
 const userPillBtn = document.getElementById('userPillBtn');
 const userMenu = document.getElementById('userMenu');
-const openHistory = document.getElementById('openHistory');
 
 if (userPillBtn && userMenu) {
   userPillBtn.addEventListener('click', () => {
@@ -85,8 +82,6 @@ if (userPillBtn && userMenu) {
     }
   });
 }
-
-if (openHistory) openHistory.addEventListener('click', (e) => { e.preventDefault(); location.href = 'history.html'; userMenu.classList.remove('show'); });
 
 usernameLabel.textContent = localStorage.getItem('fullname') || localStorage.getItem('username') || 'Guest';
 userRoleLabel.textContent = (localStorage.getItem('role') || 'user').toUpperCase();
@@ -167,16 +162,18 @@ async function verifyProfile() {
       throw new Error('Unauthorized');
     }
 
+    // Admins get their own dashboard — bail out before any camera/socket
+    // setup runs on this page.
+    if (data.role === 'admin') {
+      localStorage.setItem('role', 'admin');
+      window.location.href = 'admin.html';
+      return false;
+    }
+
     usernameLabel.textContent = data.fullname || data.username || 'Guest';
     userRoleLabel.textContent = (data.role || 'user').toUpperCase();
-
-    if (data.role === 'admin') {
-      adminBanner.style.display = 'flex';
-      localStorage.setItem('role', 'admin');
-    } else {
-      adminBanner.style.display = 'none';
-      localStorage.setItem('role', 'user');
-    }
+    adminBanner.style.display = 'none';
+    localStorage.setItem('role', 'user');
     return true;
   } catch (err) {
     console.error('Profile verification failed:', err);
@@ -187,36 +184,6 @@ async function verifyProfile() {
     window.location.href = 'login.html';
     return false;
   }
-}
-
-async function fetchCallHistory() {
-  try {
-    const response = await fetch('/api/call-history', {
-      headers: { 'Authorization': authToken }
-    });
-    const data = await response.json();
-    if (!data.success) throw new Error('Unable to load history');
-    renderHistory(data.history || []);
-  } catch (err) {
-    console.error(err);
-    showToast('Could not load call history.', 'error');
-  }
-}
-
-function renderHistory(history) {
-  if (!history.length) {
-    historyBody.innerHTML = '<tr><td colspan="5" class="history-empty">No recent calls yet.</td></tr>';
-    return;
-  }
-  historyBody.innerHTML = history.map(item => {
-    return `<tr>
-      <td>${item.room_id}</td>
-      <td>${item.caller}</td>
-      <td>${item.callee}</td>
-      <td>${item.interpreter_mode ? 'Yes' : 'No'}</td>
-      <td>${item.duration_seconds}s</td>
-    </tr>`;
-  }).join('');
 }
 
 async function startLocalMedia() {
@@ -243,13 +210,7 @@ async function startLocalMedia() {
   }
 }
 
-function toggleCamera() {
-  if (!localStream) return;
-  const videoTrack = localStream.getVideoTracks()[0];
-  if (!videoTrack) return;
-  videoTrack.enabled = !videoTrack.enabled;
-  isCameraOn = videoTrack.enabled;
-  // Use icon + status
+function updateCameraUi() {
   if (toggleCamBtn) toggleCamBtn.innerHTML = isCameraOn ? '<i class="fa-solid fa-video"></i> Camera ON' : '<i class="fa-solid fa-video-slash"></i> Camera OFF';
   if (overlayToggleCam) overlayToggleCam.innerHTML = isCameraOn ? '<i class="fa-solid fa-video"></i>' : '<i class="fa-solid fa-video-slash"></i>';
   localVideo.classList.toggle('video-muted', !isCameraOn);
@@ -263,10 +224,47 @@ function toggleCamera() {
   } else {
     localOverlay.style.display = 'block';
   }
-  // notify other participants
+}
+
+async function stopCamera() {
+  if (!localStream) return;
+  localStream.getVideoTracks().forEach(track => {
+    track.stop(); // Releases the physical webcam indicator and device.
+    localStream.removeTrack(track);
+  });
+  isCameraOn = false;
+  updateCameraUi();
   if (socket && socket.connected && roomId) {
-    socket.emit('camera-toggle', { room_id: roomId, enabled: isCameraOn });
+    socket.emit('camera-toggle', { room_id: roomId, enabled: false });
   }
+}
+
+async function startCamera() {
+  if (!roomId) return;
+  try {
+    const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const videoTrack = cameraStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    localStream.addTrack(videoTrack);
+    localVideo.srcObject = localStream;
+
+    const sender = peerConnection?.getSenders().find(item => item.track?.kind === 'video');
+    if (sender) await sender.replaceTrack(videoTrack);
+    else if (peerConnection) peerConnection.addTrack(videoTrack, localStream);
+
+    isCameraOn = true;
+    updateCameraUi();
+    if (socket?.connected) socket.emit('camera-toggle', { room_id: roomId, enabled: true });
+  } catch (err) {
+    console.error('Camera start failed', err);
+    showToast('Unable to turn on the camera.', 'error');
+  }
+}
+
+async function toggleCamera() {
+  if (!roomId) return;
+  if (isCameraOn) await stopCamera();
+  else await startCamera();
 }
 
 function toggleMic() {
@@ -296,6 +294,16 @@ function cleanupCall() {
     remoteVideo.srcObject.getTracks().forEach(track => track.stop());
     remoteVideo.srcObject = null;
   }
+  if (localCamera?.stop) localCamera.stop();
+  localCamera = null;
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  localVideo.srcObject = null;
+  isCameraOn = false;
+  isMicOn = false;
+  updateCameraUi();
   updateConnectionState(false);
   activeRoomLabel.textContent = 'None';
   roomId = null;
@@ -412,6 +420,7 @@ async function joinRoom(code, createOnly = false) {
 
   remoteOverlay.style.display = 'flex';
 
+  await startDetection();
   createPeerConnection();
   const token = authToken;
 
@@ -597,6 +606,7 @@ let localCamera = null;
 
 async function startDetection() {
   if (!localStream) return;
+  if (localCamera) return;
   const videoTrack = localStream.getVideoTracks()[0];
   if (!videoTrack) return;
 
@@ -665,12 +675,7 @@ async function predictSign(results) {
   }
 
   const features = extractFeatures(results);
-  if (!features || features.length !== 126) {
-    signLabelValue.textContent = 'No hands detected';
-    confidenceValue.textContent = '0%';
-    frameRateValue.textContent = '—';
-    return;
-  }
+  if (!features || features.length !== 126) return;
   try {
     const response = await fetch('/api/predict', {
       method: 'POST',
@@ -680,14 +685,14 @@ async function predictSign(results) {
     const data = await response.json();
     if (response.ok && data.success) {
       signLabelValue.textContent = data.predicted_class;
-      confidenceValue.textContent = `${Math.round(data.confidence * 100)}%`;
+      confidenceValue.textContent = `${Math.round(data.confidence)}%`;
       frameRateValue.textContent = `${Math.round(1000 / Math.max(1, Date.now() - lastPredictionTime))} fps`;
 
       // ---- Speak the predicted sign aloud (with cooldown / confidence gate) ----
       const now = Date.now();
       const changedSign = data.predicted_class !== lastSpokenSign;
       const cooldownPassed = now - lastSpokenTime > SPEAK_COOLDOWN_MS;
-      if (data.confidence >= MIN_CONFIDENCE_TO_SPEAK && (changedSign || cooldownPassed)) {
+      if (data.confidence >= MIN_CONFIDENCE_TO_SPEAK * 100 && (changedSign || cooldownPassed)) {
         speakSign(data.predicted_class);
         lastSpokenSign = data.predicted_class;
         lastSpokenTime = now;
@@ -720,11 +725,6 @@ async function initApp() {
   updateAudioLabel();
   const valid = await verifyProfile();
   if (!valid) return;
-  await fetchCallHistory();
-  await startLocalMedia();
-  await startDetection();
 }
-
-refreshHistoryBtn.addEventListener('click', fetchCallHistory);
 
 initApp();

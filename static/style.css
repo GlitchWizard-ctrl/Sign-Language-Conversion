@@ -802,3 +802,39 @@ body.in-fullscreen #localCameraCard {
     color: #f87171;
 }
 
+/* ============================================================
+   Admin — Sign recording & training additions (new, appended)
+   ============================================================ */
+
+.capture-status {
+    font-size: 13px;
+    min-height: 18px;
+}
+.capture-status.ok { color: #86efac; }
+.capture-status.error { color: #fca5a5; }
+
+.table-btn-sm {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.train-result {
+    font-size: 14px;
+}
+
+.train-success {
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    color: #86efac;
+    padding: 16px;
+    border-radius: 16px;
+}
+.train-success p { margin: 4px 0; }
+
+.train-error {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    padding: 16px;
+    border-radius: 16px;
+}

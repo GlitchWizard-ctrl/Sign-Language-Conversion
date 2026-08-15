@@ -35,9 +35,9 @@ and the exact class list used for that run.
 ## Run it in VS Code
 
 1. Open the `isl-project` folder in VS Code.
-2. Create a virtual environment (recommended):
+2. Use Python 3.12 and create a virtual environment (recommended). MediaPipe's Hands API used by this project is not compatible with Python 3.14:
    ```
-   python -m venv venv
+   py -3.12 -m venv venv
    venv\Scripts\activate        # Windows
    source venv/bin/activate     # macOS/Linux
    ```
@@ -47,7 +47,7 @@ and the exact class list used for that run.
    ```
 4. Run the server:
    ```
-   python app.py
+   py -3.12 app.py
    ```
 5. Open your browser at: http://127.0.0.1:5000
 
@@ -61,6 +61,24 @@ first time `isl_data.db` is created. To change it, either:
   in `db.py`, or
 - add a small admin script that calls `werkzeug.security.generate_password_hash`
   and inserts/updates a row in `users`.
+
+## Administrator workflow
+
+Sign in with an administrator account to open the separate `admin.html`
+console. It is protected on both the browser and API sides. From there an
+administrator can:
+
+- record sign samples directly from the browser camera;
+- use burst capture while the backend rejects near-duplicate frames;
+- review or remove samples per label; and
+- train a new Random Forest model without leaving the site.
+
+Training uses a held-out, stratified test set and requires at least two signs,
+five varied samples for every sign, and 20 samples overall. When training
+finishes, the model and label encoder are written atomically and loaded into
+live calls immediately—no server restart is needed. For useful real-world
+recognition, capture many examples of each sign with different hand positions,
+angles, distances, and lighting.
 
 ## Inspecting the database
 Since it's SQLite, you can open `datasets/isl_data.db` directly with:
