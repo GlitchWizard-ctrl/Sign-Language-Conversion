@@ -20,17 +20,15 @@ from sklearn.preprocessing import LabelEncoder
 
 import db
 
+USE_SERVER_MEDIAPIPE = True
 try:
     import mediapipe as mp
     # Some build environments expose mediapipe subpackages differently
-    # (e.g., mediapipe.python.solutions). Normalize to provide `mp.solutions`.
     if not hasattr(mp, 'solutions'):
         try:
-            # prefer the python namespace if available
             import mediapipe.python.solutions as _mp_py_solutions
             mp.solutions = _mp_py_solutions
         except Exception:
-            # last-resort: try importing hands directly into a small shim
             try:
                 from mediapipe.python.solutions import hands as _mp_hands_mod
                 class _Shim:
@@ -39,8 +37,10 @@ try:
                 mp.solutions.hands = _mp_hands_mod
             except Exception:
                 pass
-except ImportError:
-    raise ImportError("Run: pip install mediapipe")
+except Exception:
+    # MediaPipe not available on this environment — that's OK if clients send precomputed features.
+    mp = None
+    USE_SERVER_MEDIAPIPE = False
 
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_PATH, "models")
@@ -85,15 +85,19 @@ def try_load_model():
 
 try_load_model()
 
-mp_hands = getattr(mp.solutions, 'hands', None)
-if mp_hands is None:
-    raise RuntimeError('MediaPipe hands module not available (mp.solutions.hands)')
-hands_detector = mp_hands.Hands(
-    static_image_mode=True,
-    max_num_hands=2,
-    model_complexity=1,
-    min_detection_confidence=0.6,
-)
+hands_detector = None
+if USE_SERVER_MEDIAPIPE:
+    mp_hands = getattr(mp.solutions, 'hands', None)
+    if mp_hands is None:
+        # if the environment exposes a nonstandard layout we won't crash here
+        USE_SERVER_MEDIAPIPE = False
+    else:
+        hands_detector = mp_hands.Hands(
+            static_image_mode=True,
+            max_num_hands=2,
+            model_complexity=1,
+            min_detection_confidence=0.6,
+        )
 
 
 def decode_frame(image_b64):
@@ -161,6 +165,10 @@ def get_hand_features(frame):
     """BGR frame -> 126-dim landmark vector (left 63 + right 63), or None if no hand found."""
     if frame is None:
         return None
+    if not USE_SERVER_MEDIAPIPE or hands_detector is None:
+        # Server-side MediaPipe not available in this environment.
+        # Return None to indicate caller should provide precomputed features instead.
+        return None
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands_detector.process(rgb)
 
@@ -191,6 +199,10 @@ def predict_sign_from_b64(image_b64):
     if sign_model is None or label_encoder is None:
         return None, 0.0
     frame = decode_frame(image_b64)
+    if not USE_SERVER_MEDIAPIPE:
+        # Server cannot extract landmarks from images in this deployment.
+        # Clients should send precomputed `features` to `/api/predict` instead of images.
+        return None, 0.0
     feat = get_hand_features(frame)
     if feat is None:
         return None, 0.0
