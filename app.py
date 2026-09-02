@@ -333,7 +333,24 @@ def api_profile():
 @app.route("/api/call-history", methods=["GET"])
 @require_auth
 def api_call_history():
-    return jsonify({"success": True, "calls": db.get_call_history(request.username)})
+    calls = db.get_call_history(request.username)
+    # Map internal call record keys to the front-end's expected shape
+    history = []
+    for c in calls:
+        participants = c.get('participants') or []
+        caller = c.get('host_username')
+        # callee: other participants (comma-separated)
+        others = [p for p in participants if p != caller]
+        callee = ', '.join(others) if others else ''
+        history.append({
+            'room_id': c.get('room_id'),
+            'caller': caller,
+            'callee': callee,
+            'interpreter_mode': c.get('call_type') == 'interpreter',
+            'duration_seconds': c.get('duration_secs') or 0,
+            'created_at': c.get('started_at')
+        })
+    return jsonify({"success": True, "history": history})
 
 
 # ------------------------------------------------------------------
