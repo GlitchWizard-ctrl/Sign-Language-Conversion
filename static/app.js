@@ -802,7 +802,7 @@ async function predictSign(results) {
       const changedSign = data.predicted_class !== lastSpokenSign;
       const cooldownPassed = now - lastSpokenTime > SPEAK_COOLDOWN_MS;
       if (data.confidence >= MIN_CONFIDENCE_TO_SPEAK * 100 && (changedSign || cooldownPassed)) {
-        speakSign(data.predicted_class);
+        enqueueTeleprompter(data.predicted_class, localStorage.getItem('username') || 'You', data.confidence);
         lastSpokenSign = data.predicted_class;
         lastSpokenTime = now;
       }
@@ -847,3 +847,69 @@ async function initApp() {
 }
 
 initApp();
+
+// ------------------------- Teleprompter + speech queue -------------------------
+const teleprompterEl = document.getElementById('teleprompter');
+let teleQueue = [];
+let teleSpeaking = false;
+
+function enqueueTeleprompter(text, who = 'You', confidence = 100) {
+  if (!text) return;
+  teleQueue.push({ text, who, confidence });
+  if (!teleSpeaking) processTeleQueue();
+}
+
+function processTeleQueue() {
+  if (teleQueue.length === 0) { teleSpeaking = false; teleprompterEl.innerHTML = '&nbsp;'; return; }
+  teleSpeaking = true;
+  const item = teleQueue.shift();
+  speakAndDisplay(item.text, item.who).then(() => { teleSpeaking = false; processTeleQueue(); }).catch(() => { teleSpeaking = false; processTeleQueue(); });
+}
+
+function speakAndDisplay(text, who) {
+  return new Promise((resolve) => {
+    if (!teleprompterEl) { resolve(); return; }
+    teleprompterEl.textContent = '';
+    // Use SpeechSynthesis and onboundary to progressively reveal text when supported
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.0; utter.pitch = 1.0;
+    let revealed = 0;
+    const showPartial = (charIndex) => {
+      if (!teleprompterEl) return;
+      revealed = Math.max(revealed, charIndex || 0);
+      const shown = text.slice(0, revealed);
+      const pending = text.slice(revealed);
+      teleprompterEl.innerHTML = `<span class="revealed">${escapeHtml(shown)}</span><span class="pending">${escapeHtml(pending)}</span>`;
+    };
+
+    let boundarySupported = false;
+    utter.onboundary = (ev) => {
+      boundarySupported = true;
+      try { showPartial(ev.charIndex + (ev.charLength || 0)); } catch (e) {}
+    };
+
+    utter.onend = () => { showPartial(text.length); setTimeout(resolve, 150); };
+    // fallback progressive reveal if onboundary unsupported
+    if (!('onboundary' in SpeechSynthesisUtterance.prototype)) {
+      // approximate duration by words
+      const words = text.split(/\s+/).filter(Boolean);
+      let idx = 0;
+      const total = Math.max(1, words.length);
+      const estDuration = Math.max(600, words.length * 350); // ms
+      const step = Math.max(1, Math.floor(text.length / total));
+      const interval = Math.max(50, Math.floor(estDuration / total));
+      const timer = setInterval(() => {
+        idx += 1;
+        const chars = Math.min(text.length, idx * step);
+        showPartial(chars);
+        if (chars >= text.length) { clearInterval(timer); }
+      }, interval);
+    }
+
+    // speak
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  });
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

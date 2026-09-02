@@ -409,6 +409,24 @@ button:hover {
     border-radius: 12px;
     background: rgba(255,255,255,0.02);
 }
+
+.teleprompter {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+    color: white;
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.teleprompter .revealed { color: #fff; }
+.teleprompter .pending { color: rgba(255,255,255,0.35); }
 .caption-entry {
     padding: 10px 12px;
     border-radius: 12px;
