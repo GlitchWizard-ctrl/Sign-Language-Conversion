@@ -946,7 +946,8 @@ async function predictSign(results) {
 
   const features = extractFeatures(results);
   if (!features || features.length !== 126) return;
-  try {
+    try {
+    console.log('[predict] features length', features.length, 'sample:', features.slice(0,10));
     const response = await fetch('/api/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': authToken },

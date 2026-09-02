@@ -627,6 +627,25 @@ def api_predict():
     return jsonify({"success": True, "predicted_class": word, "confidence": confidence})
 
 
+@app.route("/api/debug/model", methods=["GET"])
+def api_debug_model():
+    """Debug endpoint: reports model/label encoder availability and file presence."""
+    model_path = os.path.join(MODEL_DIR, "best_model.pkl")
+    label_path = os.path.join(DATASET_DIR, "label_encoder.pkl")
+    info = {
+        "model_loaded": sign_model is not None,
+        "label_loaded": label_encoder is not None,
+        "model_file_exists": os.path.exists(model_path),
+        "label_file_exists": os.path.exists(label_path),
+    }
+    try:
+        if label_encoder is not None:
+            info["label_classes"] = len(label_encoder.classes_)
+    except Exception:
+        info["label_classes"] = None
+    return jsonify({"success": True, "info": info})
+
+
 # ------------------------------------------------------------------
 # Static entry points
 # ------------------------------------------------------------------
