@@ -19,6 +19,8 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.preprocessing import LabelEncoder
 
 import db
+import urllib.request
+import shutil
 
 USE_SERVER_MEDIAPIPE = True
 try:
@@ -72,8 +74,23 @@ label_encoder = None
 def try_load_model():
     global sign_model, label_encoder
     try:
-        with open(os.path.join(MODEL_DIR, "best_model.pkl"), "rb") as f:
-            sign_model = pickle.load(f)
+        model_path = os.path.join(MODEL_DIR, "best_model.pkl")
+        # If model missing but an external MODEL_URL is provided, attempt download
+        if not os.path.exists(model_path):
+            model_url = os.environ.get('MODEL_URL')
+            if model_url:
+                try:
+                    print(f"[app] downloading model from {model_url} -> {model_path}")
+                    tmp_path = model_path + '.download'
+                    urllib.request.urlretrieve(model_url, tmp_path)
+                    shutil.move(tmp_path, model_path)
+                    print('[app] model downloaded successfully')
+                except Exception as e:
+                    print(f"[app] model download failed: {e}")
+
+        if os.path.exists(model_path):
+            with open(model_path, "rb") as f:
+                sign_model = pickle.load(f)
         with open(os.path.join(DATASET_DIR, "label_encoder.pkl"), "rb") as f:
             label_encoder = pickle.load(f)
         print(f"[app] Loaded sign model with {len(label_encoder.classes_)} classes")
@@ -616,6 +633,7 @@ def serve_static(path):
 
 sid_to_user = {}
 room_members = {}
+room_owners = {}
 
 
 @socketio.on("connect")
@@ -650,6 +668,8 @@ def on_join_call(data):
 
     if room_id not in room_members:
         room_members[room_id] = {}
+        # record this SID as the room owner (host)
+        room_owners[room_id] = request.sid
         db.create_call(room_id, username, call_type)
     else:
         db.add_participant(room_id, username)
@@ -678,6 +698,7 @@ def on_join_room(data):
 
     if room_id not in room_members:
         room_members[room_id] = {}
+        room_owners[room_id] = request.sid
         db.create_call(room_id, username, call_type)
     else:
         db.add_participant(room_id, username)
@@ -756,6 +777,9 @@ def on_camera_toggle(data):
     room_id = data.get('room_id')
     enabled = bool(data.get('enabled'))
     username = sid_to_user.get(request.sid, 'unknown')
+    # ignore attempts that try to claim another SID
+    if 'sid' in data and data.get('sid') != request.sid:
+        return
     if room_id:
         emit('camera-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
 
@@ -765,6 +789,9 @@ def on_mic_toggle(data):
     room_id = data.get('room_id')
     enabled = bool(data.get('enabled'))
     username = sid_to_user.get(request.sid, 'unknown')
+    # security: do not accept crafted requests claiming to toggle another SID
+    if 'sid' in data and data.get('sid') != request.sid:
+        return
     if room_id:
         emit('mic-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
 
@@ -802,6 +829,11 @@ def on_publish_caption(data):
 def on_end_call(data):
     room_id = data.get('room_id')
     username = sid_to_user.get(request.sid, 'unknown')
+    # Only room owner may end the call for everyone
+    owner_sid = room_owners.get(room_id)
+    if owner_sid and request.sid != owner_sid:
+        emit('end-call-denied', {'room_id': room_id, 'reason': 'only host may end call'}, room=request.sid)
+        return
     if room_id:
         db.end_call(room_id)
         emit('call-ended', {'room_id': room_id, 'ended_by': username}, room=room_id)
@@ -813,6 +845,12 @@ def on_end_call(data):
                 except Exception:
                     pass
             del room_members[room_id]
+    # remove owner record
+    if room_id in room_owners:
+        try:
+            del room_owners[room_id]
+        except Exception:
+            pass
 
 
 @socketio.on("leave-call")
