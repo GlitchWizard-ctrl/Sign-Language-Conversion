@@ -10,6 +10,11 @@ import numpy as np
 from datetime import datetime
 from contextlib import contextmanager
 from werkzeug.security import generate_password_hash, check_password_hash
+import base64
+try:
+    from cryptography.fernet import Fernet
+except Exception:
+    Fernet = None
 
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 DATASET_PATH = os.path.join(BASE_PATH, "datasets")
@@ -80,6 +85,15 @@ def init_db():
                 ended_at        TIMESTAMP,
                 duration_secs   INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS captions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id     TEXT NOT NULL,
+                username    TEXT NOT NULL,
+                text        TEXT NOT NULL,
+                confidence  REAL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # Early versions stored calls with caller/callee/start_time columns.
@@ -123,6 +137,69 @@ def init_db():
                 ("Administrator", "admin@isl.local", "admin",
                  generate_password_hash("password"), "admin")
             )
+
+
+def _get_fernet():
+    """Return a Fernet instance if available and env key is set, else None."""
+    key = os.environ.get('CAPTION_SECRET_KEY')
+    if not key or Fernet is None:
+        return None
+    try:
+        # Accept raw or base64-encoded keys; ensure bytes
+        if isinstance(key, str):
+            key_b = key.encode('utf-8')
+        else:
+            key_b = key
+        # If key length looks like a raw 32-byte, base64-encode it
+        if len(key_b) == 32 and b'=' not in key_b:
+            key_b = base64.urlsafe_b64encode(key_b)
+        return Fernet(key_b)
+    except Exception:
+        return None
+
+
+def insert_caption(room_id, username, text, confidence=None):
+    f = _get_fernet()
+    store_text = text
+    if f:
+        try:
+            store_text = f.encrypt(text.encode('utf-8')).decode('utf-8')
+        except Exception:
+            store_text = text
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO captions (room_id, username, text, confidence) VALUES (?, ?, ?, ?)",
+            (room_id, username, store_text, confidence)
+        )
+
+
+def get_captions(room_id, limit=100):
+    f = _get_fernet()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT username, text, confidence, created_at FROM captions WHERE room_id = ? ORDER BY id DESC LIMIT ?",
+            (room_id, limit)
+        ).fetchall()
+        result = []
+        for r in rows:
+            txt = r['text']
+            if f:
+                try:
+                    txt = f.decrypt(txt.encode('utf-8')).decode('utf-8')
+                except Exception:
+                    pass
+            result.append({
+                'username': r['username'],
+                'text': txt,
+                'confidence': r['confidence'],
+                'created_at': r['created_at']
+            })
+        return list(reversed(result))
+
+
+def clear_captions(room_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM captions WHERE room_id = ?", (room_id,))
 
 
 # -----------------------------------------------------------------------

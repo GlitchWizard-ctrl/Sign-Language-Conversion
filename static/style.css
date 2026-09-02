@@ -399,6 +399,75 @@ button:hover {
     background: rgba(255, 255, 255, 0.03);
 }
 
+.caption-history {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.02);
+}
+.caption-entry {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+.caption-entry .who {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+.caption-entry .what {
+    font-weight: 700;
+    color: white;
+}
+.caption-entry .when {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.remotes-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    align-items: start;
+}
+.remote-card {
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(0,0,0,0.35);
+    min-height: 140px;
+}
+.remote-card video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.remote-meta {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    background: rgba(0,0,0,0.4);
+    padding: 6px 8px;
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+.remote-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    padding: 24px;
+}
+
 .history-empty {
     text-align: center;
     color: var(--text-muted);

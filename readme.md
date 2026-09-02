@@ -35,20 +35,24 @@ and the exact class list used for that run.
 ## Run it in VS Code
 
 1. Open the `isl-project` folder in VS Code.
-2. Use Python 3.12 and create a virtual environment (recommended). MediaPipe's Hands API used by this project is not compatible with Python 3.14:
-   ```
-   py -3.12 -m venv venv
-   venv\Scripts\activate        # Windows
-   source venv/bin/activate     # macOS/Linux
-   ```
+2. Use Python 3.10 and create a virtual environment (recommended):
+  ```
+  py -3.10 -m venv venv
+  venv\Scripts\activate        # Windows
+  source venv/bin/activate     # macOS/Linux
+  ```
 3. Install dependencies:
    ```
    pip install -r requirements.txt
    ```
-4. Run the server:
-   ```
-   py -3.12 app.py
-   ```
+4. Run the server (development):
+  ```
+  python app.py
+  ```
+
+For production hosts like Render, the `Procfile` uses `gunicorn` with an
+`eventlet` worker. Install dependencies and deploy; the site will use the
+same codebase both locally and on the host.
 5. Open your browser at: http://127.0.0.1:5000
 
 ## Login credentials
@@ -79,6 +83,20 @@ finishes, the model and label encoder are written atomically and loaded into
 live calls immediately—no server restart is needed. For useful real-world
 recognition, capture many examples of each sign with different hand positions,
 angles, distances, and lighting.
+ 
+## Live caption history & security
+
+During calls, detected signs are broadcast to all participants and persisted
+to the local SQLite DB. To protect sensitive captions at rest you can set an
+environment variable `CAPTION_SECRET_KEY` to a URL-safe base64 32-byte key
+for Fernet encryption. If the key is not set captions are stored plaintext in
+the database (use HTTPS in transport to protect data-in-flight).
+
+Example (generate a key in Python):
+```
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+Then set `CAPTION_SECRET_KEY` in your host's environment or Render dashboard.
 
 ## Inspecting the database
 Since it's SQLite, you can open `datasets/isl_data.db` directly with:

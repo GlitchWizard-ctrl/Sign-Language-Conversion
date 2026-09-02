@@ -1,10 +1,4 @@
 {
     "python.defaultInterpreterPath": "C:\\Users\\asus\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
-    "python-envs.pythonProjects": [
-        {
-            "path": ".",
-            "envManager": "ms-python.python:system",
-            "packageManager": "ms-python.python:pip"
-        }
-    ]
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

@@ -114,8 +114,9 @@
                         <div class="badge-pill">Remote</div>
                     </div>
                     <div class="camera-card">
-                        <video id="remoteVideo" autoplay playsinline></video>
-                        <div class="remote-overlay" id="remoteOverlay">Waiting for participant...</div>
+                        <div id="remotesContainer" class="remotes-container">
+                            <div class="remote-placeholder" id="remoteOverlay">Waiting for participant...</div>
+                        </div>
                         <div id="interpretationOverlay" class="interpret-overlay" style="display:none"></div>
                         <div class="call-overlay-controls in-call-only" id="callOverlayControls">
                             <button id="overlayToggleCam" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
@@ -150,6 +151,16 @@
                             <span class="stat-value" id="connectionLabel">Disconnected</span>
                             <span class="stat-text">Call status</span>
                         </div>
+                    </div>
+                </div>
+            </section>
+            <section class="glass-panel" id="captionPanel">
+                <div class="panel-header">
+                    <h3>Live captions (this call)</h3>
+                </div>
+                <div class="panel-body">
+                    <div id="captionHistory" class="caption-history">
+                        <!-- Captions will be appended here -->
                     </div>
                 </div>
             </section>

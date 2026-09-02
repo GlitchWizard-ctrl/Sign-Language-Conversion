@@ -615,6 +615,42 @@ def on_join_call(data):
     emit("peer-joined", {"sid": request.sid, "username": username}, room=room_id, include_self=False)
 
 
+@socketio.on("join-room")
+def on_join_room(data):
+    # Compatibility handler for clients using 'join-room'
+    room_id = data.get("room_id") or data.get("room")
+    call_type = data.get("call_type", data.get("callType", "1on1"))
+    username = sid_to_user.get(request.sid, None)
+    if not username:
+        # Try token fallback
+        token = data.get('token')
+        username = db.verify_session(token) if token else None
+    if not username:
+        return False
+
+    if room_id not in room_members:
+        room_members[room_id] = {}
+        db.create_call(room_id, username, call_type)
+    else:
+        db.add_participant(room_id, username)
+
+    existing_peers = [{"sid": sid, "username": u} for sid, u in room_members[room_id].items()]
+
+    join_room(room_id)
+    room_members[room_id][request.sid] = username
+
+    # send caption history to the joining client only
+    try:
+        captions = db.get_captions(room_id)
+    except Exception:
+        captions = []
+    emit("caption-history", {"captions": captions}, room=request.sid)
+
+    emit("room-joined", {"room_id": room_id, "peers": existing_peers, "room_owner": existing_peers[0]['username'] if existing_peers else username, "participants": [p['username'] for p in existing_peers]}, room=room_id)
+    # notify other participants that someone joined
+    emit('peer-joined', {'sid': request.sid, 'username': username, 'room_id': room_id}, room=room_id, include_self=False)
+
+
 @socketio.on("signal")
 def on_signal(data):
     to_sid = data.get("to")
@@ -625,6 +661,77 @@ def on_signal(data):
         "username": sid_to_user.get(request.sid, "unknown"),
         "signal": data.get("signal"),
     }, room=to_sid)
+
+
+@socketio.on('offer')
+def on_offer(data):
+    # Route an SDP offer to a specific peer (target SID expected in 'to')
+    to_sid = data.get('to') or data.get('target')
+    if not to_sid:
+        return
+    payload = dict(data)
+    payload['from'] = request.sid
+    payload['username'] = sid_to_user.get(request.sid)
+    emit('offer', payload, room=to_sid)
+
+
+@socketio.on('answer')
+def on_answer(data):
+    # Route an SDP answer to a specific peer
+    to_sid = data.get('to') or data.get('target')
+    if not to_sid:
+        return
+    payload = dict(data)
+    payload['from'] = request.sid
+    payload['username'] = sid_to_user.get(request.sid)
+    emit('answer', payload, room=to_sid)
+
+
+@socketio.on('ice-candidate')
+def on_ice_candidate(data):
+    # Route ICE candidate to specific peer
+    to_sid = data.get('to') or data.get('target')
+    if not to_sid:
+        return
+    payload = dict(data)
+    payload['from'] = request.sid
+    payload['username'] = sid_to_user.get(request.sid)
+    emit('ice-candidate', payload, room=to_sid)
+
+
+@socketio.on('camera-toggle')
+def on_camera_toggle(data):
+    room_id = data.get('room_id')
+    enabled = bool(data.get('enabled'))
+    username = sid_to_user.get(request.sid, 'unknown')
+    if room_id:
+        emit('camera-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
+
+
+@socketio.on('mic-toggle')
+def on_mic_toggle(data):
+    room_id = data.get('room_id')
+    enabled = bool(data.get('enabled'))
+    username = sid_to_user.get(request.sid, 'unknown')
+    if room_id:
+        emit('mic-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
+
+
+@socketio.on('end-call')
+def on_end_call(data):
+    room_id = data.get('room_id')
+    username = sid_to_user.get(request.sid, 'unknown')
+    if room_id:
+        db.end_call(room_id)
+        emit('call-ended', {'room_id': room_id, 'ended_by': username}, room=room_id)
+        # cleanup server-side room state
+        if room_id in room_members:
+            for sid in list(room_members[room_id].keys()):
+                try:
+                    leave_room(room_id, sid=sid)
+                except Exception:
+                    pass
+            del room_members[room_id]
 
 
 @socketio.on("leave-call")
@@ -651,6 +758,11 @@ def on_sign_frame(data):
 
     word, confidence = predict_sign_from_b64(image_b64)
     if word and confidence >= 55:
+        # persist caption (encrypted at rest if configured)
+        try:
+            db.insert_caption(room_id, username, word, float(confidence))
+        except Exception:
+            pass
         emit("sign-caption", {
             "username": username,
             "text": word,

@@ -4,10 +4,10 @@ if (!authToken) {
   window.location.href = 'login.html';
 }
 
-const socket = io({ autoConnect: false });
+const socket = io({ autoConnect: false, auth: { token: authToken } });
 let localStream = null;
-let peerConnection = null;
-let dataChannel = null;
+let peerConnections = {};
+let dataChannels = {};
 let roomId = null;
 let isCaller = false;
 let isCameraOn = false;
@@ -33,9 +33,8 @@ function speakSign(text) {
 }
 
 const localVideo = document.getElementById('localVideo');
-const remoteVideo = document.getElementById('remoteVideo');
 const localOverlay = document.getElementById('localOverlay');
-const remoteOverlay = document.getElementById('remoteOverlay');
+const remotesContainer = document.getElementById('remotesContainer');
 const connectionStatus = document.getElementById('connectionStatus');
 const activeRoomLabel = document.getElementById('activeRoomLabel');
 const signLabelValue = document.getElementById('signLabelValue');
@@ -232,6 +231,10 @@ async function stopCamera() {
     track.stop(); // Releases the physical webcam indicator and device.
     localStream.removeTrack(track);
   });
+  if (localCamera && localCamera.stop) {
+    try { await localCamera.stop(); } catch (e) { /* ignore */ }
+    localCamera = null;
+  }
   isCameraOn = false;
   updateCameraUi();
   if (socket && socket.connected && roomId) {
@@ -286,13 +289,12 @@ if (overlayToggleCam) overlayToggleCam.addEventListener('click', toggleCamera);
 if (overlayToggleMic) overlayToggleMic.addEventListener('click', toggleMic);
 
 function cleanupCall() {
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  if (remoteVideo.srcObject) {
-    remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-    remoteVideo.srcObject = null;
+  // close all peer connections and remove remote videos
+  for (const sid of Object.keys(peerConnections)) {
+    try { peerConnections[sid].close(); } catch (e) {}
+    delete peerConnections[sid];
+    delete dataChannels[sid];
+    removeRemoteVideo(sid);
   }
   if (localCamera?.stop) localCamera.stop();
   localCamera = null;
@@ -340,7 +342,7 @@ if (overlayInterpreterBtn) overlayInterpreterBtn.addEventListener('click', () =>
 
 if (overlayFullscreenBtn) overlayFullscreenBtn.addEventListener('click', () => {
   try {
-    const container = remoteVideo.parentElement;
+    const container = remotesContainer || document.body;
     if (!document.fullscreenElement) container.requestFullscreen?.();
     else document.exitFullscreen?.();
   } catch (e) { console.error('Fullscreen error', e); }
@@ -351,62 +353,24 @@ document.addEventListener('fullscreenchange', () => {
   else document.body.classList.remove('in-fullscreen');
 });
 
-function createPeerConnection() {
-  const config = {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-  };
-  peerConnection = new RTCPeerConnection(config);
+function createRemoteVideoElement(sid, username) {
+  const card = document.createElement('div');
+  card.className = 'remote-card';
+  card.id = `remote-${sid}`;
+  card.setAttribute('data-sid', sid);
+  const video = document.createElement('video');
+  video.autoplay = true;
+  video.playsinline = true;
+  card.appendChild(video);
+  const meta = document.createElement('div'); meta.className = 'remote-meta'; meta.textContent = username || sid;
+  card.appendChild(meta);
+  remotesContainer.appendChild(card);
+  return video;
+}
 
-  peerConnection.ontrack = event => {
-    remoteVideo.srcObject = event.streams[0];
-    remoteOverlay.style.display = 'none';
-  };
-
-  peerConnection.onicecandidate = event => {
-    if (event.candidate && roomId) {
-      socket.emit('ice-candidate', { room_id: roomId, candidate: event.candidate });
-    }
-  };
-
-  peerConnection.ondatachannel = event => {
-    dataChannel = event.channel;
-    dataChannel.onmessage = event => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload && payload.type === 'interpret') {
-          const el = document.getElementById('interpretationOverlay');
-          if (el) {
-            el.textContent = `${payload.sign} (${Math.round(payload.confidence*100)}%)`;
-            el.style.display = 'block';
-            setTimeout(() => { el.style.display = 'none'; }, 3500);
-          }
-        }
-      } catch (e) { console.log('dataChannel message', event.data); }
-    };
-    dataChannel.onopen = () => console.log('Data channel open.');
-  };
-
-  if (localStream) {
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-  }
-
-  if (!dataChannel) {
-    dataChannel = peerConnection.createDataChannel('call-data');
-    dataChannel.onmessage = event => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload && payload.type === 'interpret') {
-          const el = document.getElementById('interpretationOverlay');
-          if (el) {
-            el.textContent = `${payload.sign} (${Math.round(payload.confidence*100)}%)`;
-            el.style.display = 'block';
-            setTimeout(() => { el.style.display = 'none'; }, 3500);
-          }
-        }
-      } catch (e) { console.log('dataChannel message', event.data); }
-    };
-    dataChannel.onopen = () => console.log('Data channel open.');
-  }
+function removeRemoteVideo(sid) {
+  const el = document.getElementById(`remote-${sid}`);
+  if (el) el.remove();
 }
 
 async function joinRoom(code, createOnly = false) {
@@ -418,10 +382,10 @@ async function joinRoom(code, createOnly = false) {
   updateConverterLabel();
   if (callOverlayControls) callOverlayControls.classList.add('show');
 
-  remoteOverlay.style.display = 'flex';
+  const placeholder = document.getElementById('remoteOverlay');
+  if (placeholder) placeholder.style.display = 'flex';
 
   await startDetection();
-  createPeerConnection();
   const token = authToken;
 
   socket.emit('join-room', {
@@ -491,18 +455,20 @@ function waitForSocketConnected(timeout = 5000) {
 socket.on('room-joined', async data => {
   if (!roomId || data.room_id !== roomId) return;
   showToast('Room participants updated.', 'info');
-  const roomOwner = data.room_owner;
-  const username = localStorage.getItem('username');
-  const shouldOffer = roomOwner === username;
-  console.log('room-joined', data, 'shouldOffer=', shouldOffer);
-  if (data.participants.length >= 2 && shouldOffer && peerConnection && peerConnection.signalingState === 'stable') {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('offer', {
-      room_id: roomId,
-      sdp: offer,
-      target: 'peer'
-    });
+  console.log('room-joined', data);
+  // Create peer connections and send offers to each existing participant
+  const peers = data.peers || [];
+  for (const p of peers) {
+    if (!p || !p.sid) continue;
+    const sid = p.sid;
+    if (sid === socket.id) continue;
+    if (peerConnections[sid]) continue;
+    const pc = createPeerConnection(sid, p.username, true);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', { room_id: roomId, sdp: offer, to: sid });
+    } catch (e) { console.error('Failed to create/send offer to', sid, e); }
   }
 });
 
@@ -513,49 +479,85 @@ socket.on('room-error', data => {
 
 socket.on('offer', async data => {
   if (!roomId || data.room_id !== roomId) return;
-  if (!peerConnection) createPeerConnection();
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
-  socket.emit('answer', {
-    room_id: roomId,
-    sdp: answer,
-    target: 'peer'
-  });
+  const from = data.from;
+  if (!from) return;
+  const username = data.username || null;
+  const pc = createPeerConnection(from, username, false);
+  try {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('answer', { room_id: roomId, sdp: answer, to: from });
+  } catch (e) { console.error('Error handling offer', e); }
 });
 
 socket.on('answer', async data => {
   if (!roomId || data.room_id !== roomId) return;
-  if (!peerConnection) return;
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+  const from = data.from;
+  if (!from) return;
+  const pc = peerConnections[from];
+  if (!pc) return console.warn('No peerConnection for answer from', from);
+  try { await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); } catch (e) { console.error(e); }
 });
 
 socket.on('camera-changed', data => {
   if (!roomId || data.room_id !== roomId) return;
   const enabled = !!data.enabled;
-  // When remote camera is turned off, show their overlay placeholder
-  if (remoteOverlay) {
-    remoteOverlay.style.display = enabled ? 'none' : 'flex';
+  const sid = data.sid;
+  if (!sid) return;
+  const card = document.getElementById(`remote-${sid}`);
+  if (card) {
+    if (!enabled) {
+      // show a simple overlay by reducing opacity
+      card.style.opacity = '0.25';
+    } else {
+      card.style.opacity = '1';
+    }
   }
 });
 
 socket.on('mic-changed', data => {
   if (!roomId || data.room_id !== roomId) return;
   const enabled = !!data.enabled;
-  // indicate remote mic state via a small badge in the overlay if present
-  if (remoteOverlay) {
-    const micBadge = document.getElementById('remoteMicBadge');
-    if (micBadge) micBadge.textContent = enabled ? '' : '🔇';
+  const sid = data.sid;
+  if (!sid) return;
+  const card = document.getElementById(`remote-${sid}`);
+  if (card) {
+    let badge = card.querySelector('.remote-mic-badge');
+    if (!badge) {
+      badge = document.createElement('div'); badge.className = 'remote-mic-badge'; badge.style.position='absolute'; badge.style.right='8px'; badge.style.top='8px'; badge.style.fontSize='14px'; card.appendChild(badge);
+    }
+    badge.textContent = enabled ? '' : '🔇';
   }
 });
 
 socket.on('ice-candidate', async data => {
-  if (!peerConnection || !data.candidate) return;
-  try {
-    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-  } catch (err) {
-    console.error('Ice candidate error', err);
+  const from = data.from;
+  if (!from || !data.candidate) return;
+  const pc = peerConnections[from];
+  if (!pc) return;
+  try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (err) { console.error('Ice candidate error', err); }
+});
+
+socket.on('peer-joined', data => {
+  // another participant joined — show placeholder
+  if (!data || data.room_id !== roomId) return;
+  const sid = data.sid;
+  const username = data.username || sid;
+  if (!sid || sid === socket.id) return;
+  // create an empty remote card so UI updates immediately
+  if (!document.getElementById(`remote-${sid}`)) createRemoteVideoElement(sid, username);
+});
+
+socket.on('peer-left', data => {
+  if (!data || data.room_id !== roomId) return;
+  const sid = data.sid;
+  if (!sid) return;
+  if (peerConnections[sid]) {
+    try { peerConnections[sid].close(); } catch (e) {}
+    delete peerConnections[sid];
   }
+  removeRemoteVideo(sid);
 });
 
 
@@ -570,6 +572,36 @@ socket.on('disconnect', () => {
   updateConnectionState(false);
   showToast('Signaling connection lost.', 'error');
 });
+
+// Receive caption history for the room upon joining
+socket.on('caption-history', data => {
+  const capEl = document.getElementById('captionHistory');
+  if (!capEl || !data || !data.captions) return;
+  capEl.innerHTML = '';
+  for (const c of data.captions) {
+    appendCaption(c.username, c.text, c.confidence, c.created_at);
+  }
+});
+
+socket.on('sign-caption', data => {
+  if (!data) return;
+  appendCaption(data.username, data.text, data.confidence, null);
+});
+
+function appendCaption(username, text, confidence, created_at) {
+  const capEl = document.getElementById('captionHistory');
+  if (!capEl) return;
+  const entry = document.createElement('div');
+  entry.className = 'caption-entry';
+  const who = document.createElement('div'); who.className = 'who'; who.textContent = username || 'unknown';
+  const what = document.createElement('div'); what.className = 'what'; what.textContent = text || '';
+  const when = document.createElement('div'); when.className = 'when'; when.textContent = created_at ? new Date(created_at).toLocaleTimeString() : '';
+  entry.appendChild(who);
+  entry.appendChild(what);
+  entry.appendChild(when);
+  capEl.appendChild(entry);
+  capEl.scrollTop = capEl.scrollHeight;
+}
 
 const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
 hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.75, minTrackingConfidence: 0.65 });
@@ -699,8 +731,12 @@ async function predictSign(results) {
       }
 
       try {
-        if (dataChannel && dataChannel.readyState === 'open') {
-          dataChannel.send(JSON.stringify({ type: 'interpret', sign: data.predicted_class, confidence: data.confidence }));
+        const msg = JSON.stringify({ type: 'interpret', sign: data.predicted_class, confidence: data.confidence });
+        for (const sid in dataChannels) {
+          const ch = dataChannels[sid];
+          if (ch && ch.readyState === 'open') {
+            ch.send(msg);
+          }
         }
       } catch (e) { console.error('send interpret', e); }
     } else {
@@ -725,6 +761,7 @@ async function initApp() {
   updateAudioLabel();
   const valid = await verifyProfile();
   if (!valid) return;
+  try { socket.connect(); } catch (e) { console.warn('Socket connect failed', e); }
 }
 
 initApp();

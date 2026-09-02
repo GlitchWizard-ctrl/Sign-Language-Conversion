@@ -7,3 +7,9 @@ numpy<2
 scikit-learn
 opencv-python
 mediapipe==0.10.20
+gunicorn
+torchvision
+SpeechRecognition
+pyttsx3
+pydub
+cryptography
