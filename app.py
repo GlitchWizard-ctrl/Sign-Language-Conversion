@@ -91,6 +91,20 @@ def try_load_model():
         if os.path.exists(model_path):
             with open(model_path, "rb") as f:
                 sign_model = pickle.load(f)
+        # Ensure label encoder is present; allow downloading via LABEL_ENCODER_URL
+        label_path = os.path.join(DATASET_DIR, "label_encoder.pkl")
+        if not os.path.exists(label_path):
+            label_url = os.environ.get('LABEL_ENCODER_URL')
+            if label_url:
+                try:
+                    print(f"[app] downloading label encoder from {label_url} -> {label_path}")
+                    tmp_lp = label_path + '.download'
+                    urllib.request.urlretrieve(label_url, tmp_lp)
+                    shutil.move(tmp_lp, label_path)
+                    print('[app] label encoder downloaded successfully')
+                except Exception as e:
+                    print(f"[app] label encoder download failed: {e}")
+
         with open(os.path.join(DATASET_DIR, "label_encoder.pkl"), "rb") as f:
             label_encoder = pickle.load(f)
         print(f"[app] Loaded sign model with {len(label_encoder.classes_)} classes")
