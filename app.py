@@ -662,7 +662,8 @@ def on_join_room(data):
     except Exception:
         captions = []
     emit("caption-history", {"captions": captions}, room=request.sid)
-
+    # Emit room-joined to everyone in the room and log join for diagnostics
+    app.logger.info(f"[socket] join-room: {username} -> {room_id}; peers={len(existing_peers)}")
     emit("room-joined", {"room_id": room_id, "peers": existing_peers, "room_owner": existing_peers[0]['username'] if existing_peers else username, "participants": [p['username'] for p in existing_peers]}, room=room_id)
     # notify other participants that someone joined
     emit('peer-joined', {'sid': request.sid, 'username': username, 'room_id': room_id}, room=room_id, include_self=False)
@@ -689,6 +690,7 @@ def on_offer(data):
     payload = dict(data)
     payload['from'] = request.sid
     payload['username'] = sid_to_user.get(request.sid)
+    app.logger.info(f"[socket] offer from {sid_to_user.get(request.sid)} ({request.sid}) -> {to_sid}")
     emit('offer', payload, room=to_sid)
 
 
@@ -701,6 +703,7 @@ def on_answer(data):
     payload = dict(data)
     payload['from'] = request.sid
     payload['username'] = sid_to_user.get(request.sid)
+    app.logger.info(f"[socket] answer from {sid_to_user.get(request.sid)} ({request.sid}) -> {to_sid}")
     emit('answer', payload, room=to_sid)
 
 
@@ -713,6 +716,7 @@ def on_ice_candidate(data):
     payload = dict(data)
     payload['from'] = request.sid
     payload['username'] = sid_to_user.get(request.sid)
+    app.logger.info(f"[socket] ice-candidate from {sid_to_user.get(request.sid)} ({request.sid}) -> {to_sid}")
     emit('ice-candidate', payload, room=to_sid)
 
 

@@ -56,6 +56,11 @@ const overlayToggleMic = document.getElementById('overlayToggleMic');
 const overlayInterpreterBtn = document.getElementById('overlayInterpreterBtn');
 const overlayFullscreenBtn = document.getElementById('overlayFullscreenBtn');
 const overlayEndCallBtn = document.getElementById('overlayEndCallBtn');
+const overlayToggleCamLocal = document.getElementById('overlayToggleCamLocal');
+const overlayToggleMicLocal = document.getElementById('overlayToggleMicLocal');
+const overlayEndCallBtnLocal = document.getElementById('overlayEndCallBtnLocal');
+const overlayInterpreterBtnLocal = document.getElementById('overlayInterpreterBtnLocal');
+const overlayFullscreenBtnLocal = document.getElementById('overlayFullscreenBtnLocal');
 const converterSwitch = document.getElementById('converterSwitch');
 const converterLabel = document.getElementById('converterLabel');
 // audio (text-to-speech) toggle — optional, only wired up if present in HTML
@@ -249,12 +254,20 @@ async function startCamera() {
     const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
     const videoTrack = cameraStream.getVideoTracks()[0];
     if (!videoTrack) return;
+    // ensure we have a localStream object
+    if (!localStream) localStream = new MediaStream();
     localStream.addTrack(videoTrack);
     localVideo.srcObject = localStream;
 
-    const sender = peerConnection?.getSenders().find(item => item.track?.kind === 'video');
-    if (sender) await sender.replaceTrack(videoTrack);
-    else if (peerConnection) peerConnection.addTrack(videoTrack, localStream);
+    // replace/add video sender for each peer connection
+    for (const sid of Object.keys(peerConnections)) {
+      const pc = peerConnections[sid];
+      try {
+        const sender = pc.getSenders().find(item => item.track?.kind === 'video');
+        if (sender) await sender.replaceTrack(videoTrack);
+        else pc.addTrack(videoTrack, localStream);
+      } catch (e) { console.warn('replace/add track failed for', sid, e); }
+    }
 
     isCameraOn = true;
     updateCameraUi();
@@ -303,6 +316,10 @@ function cleanupCall() {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
   }
+  // reset caption stream
+  const capEl = document.getElementById('captionHistory');
+  if (capEl) capEl.innerHTML = '';
+  lastCaptionAuthor = null;
   localVideo.srcObject = null;
   isCameraOn = false;
   isMicOn = false;
@@ -334,6 +351,29 @@ if (overlayEndCallBtn) overlayEndCallBtn.addEventListener('click', async () => {
   showToast('Call ended.', 'success');
 });
 
+if (overlayEndCallBtnLocal) overlayEndCallBtnLocal.addEventListener('click', async () => {
+  if (!roomId) return;
+  socket.emit('end-call', { token: authToken, room_id: roomId });
+  cleanupCall();
+  showToast('Call ended.', 'success');
+});
+
+if (overlayToggleCamLocal) overlayToggleCamLocal.addEventListener('click', toggleCamera);
+if (overlayToggleMicLocal) overlayToggleMicLocal.addEventListener('click', toggleMic);
+if (overlayInterpreterBtnLocal) overlayInterpreterBtnLocal.addEventListener('click', () => {
+  converterEnabled = !converterEnabled;
+  if (converterSwitch) converterSwitch.checked = converterEnabled;
+  updateConverterLabel();
+  showToast(`Live converter ${converterEnabled ? 'enabled' : 'disabled'}`, 'info');
+});
+if (overlayFullscreenBtnLocal) overlayFullscreenBtnLocal.addEventListener('click', () => {
+  try {
+    const localCard = document.getElementById('localCameraCard') || document.querySelector('.app-container') || document.body;
+    if (!document.fullscreenElement) localCard.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  } catch (e) { console.error('Fullscreen error', e); }
+});
+
 if (overlayInterpreterBtn) overlayInterpreterBtn.addEventListener('click', () => {
   converterEnabled = !converterEnabled;
   if (converterSwitch) converterSwitch.checked = converterEnabled;
@@ -343,8 +383,8 @@ if (overlayInterpreterBtn) overlayInterpreterBtn.addEventListener('click', () =>
 
 if (overlayFullscreenBtn) overlayFullscreenBtn.addEventListener('click', () => {
   try {
-    const container = remotesContainer || document.body;
-    if (!document.fullscreenElement) container.requestFullscreen?.();
+    const remoteContainer = document.getElementById('remotesContainer') || document.querySelector('.app-container') || document.body;
+    if (!document.fullscreenElement) remoteContainer.requestFullscreen?.();
     else document.exitFullscreen?.();
   } catch (e) { console.error('Fullscreen error', e); }
 });
@@ -366,6 +406,7 @@ function createRemoteVideoElement(sid, username) {
   const meta = document.createElement('div'); meta.className = 'remote-meta'; meta.textContent = username || sid;
   card.appendChild(meta);
   remotesContainer.appendChild(card);
+  console.log('[client] createRemoteVideoElement', sid, username);
   updateRemotePlaceholder();
   return video;
 }
@@ -383,10 +424,80 @@ function updateRemotePlaceholder() {
   const remotes = container.querySelectorAll('.remote-card');
   if (remotes.length === 0) {
     placeholder.style.display = 'flex';
+    updateVideoLayout(true);
   } else {
     placeholder.style.display = 'none';
+    updateVideoLayout(false);
   }
 }
+
+// Fallback UX: if no remotes appear within X seconds after joining, show actionable message
+let _remoteWaitTimer = null;
+const REMOTE_WAIT_MS = 8000;
+function startRemoteWaitTimer() {
+  clearRemoteWaitTimer();
+  const placeholder = document.getElementById('remoteOverlay');
+  if (!placeholder) return;
+  placeholder.textContent = 'Waiting for participant...';
+  _remoteWaitTimer = setTimeout(() => {
+    // if still no remotes, show share/copy action
+    const container = document.getElementById('remotesContainer');
+    if (!container) return;
+    const remotes = container.querySelectorAll('.remote-card');
+    if (remotes.length > 0) return;
+    placeholder.textContent = 'No other participants found.';
+    // add copy-code button
+    let btn = document.getElementById('copyRoomCodeBtn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'copyRoomCodeBtn';
+      btn.className = 'btn-small';
+      btn.textContent = 'Copy room code';
+      btn.style.marginTop = '12px';
+      btn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(roomId || '');
+          showToast('Room code copied to clipboard', 'success');
+        } catch (e) { showToast('Unable to copy', 'error'); }
+      };
+      placeholder.appendChild(btn);
+    }
+  }, REMOTE_WAIT_MS);
+}
+
+function clearRemoteWaitTimer() {
+  if (_remoteWaitTimer) { clearTimeout(_remoteWaitTimer); _remoteWaitTimer = null; }
+  const placeholder = document.getElementById('remoteOverlay');
+  if (!placeholder) return;
+  // remove copy button if present
+  const btn = document.getElementById('copyRoomCodeBtn');
+  if (btn) btn.remove();
+  // restore default text if empty
+  if (!placeholder.textContent || placeholder.textContent.trim() === '') placeholder.textContent = 'Waiting for participant...';
+}
+
+function updateVideoLayout(singleLocal) {
+  if (singleLocal) document.body.classList.add('single-local');
+  else document.body.classList.remove('single-local');
+}
+
+// Support older server event name 'existing-peers' used by some join flows
+socket.on('existing-peers', async data => {
+  if (!roomId) return;
+  const peers = data.peers || [];
+  for (const p of peers) {
+    if (!p || !p.sid) continue;
+    const sid = p.sid;
+    if (sid === socket.id) continue;
+    if (peerConnections[sid]) continue;
+    const pc = createPeerConnection(sid, p.username, true);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', { room_id: roomId, sdp: offer, to: sid });
+    } catch (e) { console.error('Failed to create/send offer to', sid, e); }
+  }
+});
 
 function setupDataChannel(sid, ch) {
   ch.onopen = () => { console.log('Data channel open', sid); };
@@ -428,6 +539,7 @@ function createPeerConnection(sid, username, initiator = false) {
       video.id = `remoteVideo-${sid}`;
     }
     try {
+      console.log('[client] ontrack for', sid, 'streams:', e.streams && e.streams.length);
       video.srcObject = e.streams[0];
       video.play().catch(() => {});
     } catch (err) { console.error('set remote stream', err); }
@@ -459,9 +571,6 @@ async function joinRoom(code, createOnly = false) {
   updateConverterLabel();
   if (callOverlayControls) callOverlayControls.classList.add('show');
 
-  const placeholder = document.getElementById('remoteOverlay');
-  if (placeholder) placeholder.style.display = 'flex';
-
   await startDetection();
   const token = authToken;
 
@@ -471,6 +580,12 @@ async function joinRoom(code, createOnly = false) {
     participant_type: createOnly ? 'host' : 'guest',
     interpreter_mode: converterEnabled
   });
+
+  // Start fallback timer to show share/copy action if no remotes connect
+  startRemoteWaitTimer();
+
+  // Ensure layout reflects current remote count immediately
+  updateRemotePlaceholder();
 
   updateConnectionState(true);
   showToast(`Joined room ${roomId}`, 'success');
@@ -532,9 +647,11 @@ function waitForSocketConnected(timeout = 5000) {
 socket.on('room-joined', async data => {
   if (!roomId || data.room_id !== roomId) return;
   showToast('Room participants updated.', 'info');
-  console.log('room-joined', data);
+  console.log('[client] room-joined', data);
   // Create peer connections and send offers to each existing participant
   const peers = data.peers || [];
+  // peers updated — clear fallback timer (we have peer info)
+  clearRemoteWaitTimer();
   for (const p of peers) {
     if (!p || !p.sid) continue;
     const sid = p.sid;
@@ -547,6 +664,17 @@ socket.on('room-joined', async data => {
       socket.emit('offer', { room_id: roomId, sdp: offer, to: sid });
     } catch (e) { console.error('Failed to create/send offer to', sid, e); }
   }
+});
+
+socket.on('peer-joined', data => {
+  // someone else joined — clear the fallback timer and update UI
+  console.log('[client] peer-joined', data);
+  clearRemoteWaitTimer();
+  // create an empty remote card so UI updates immediately (if not present)
+  if (data && data.sid && !document.getElementById(`remote-${data.sid}`)) {
+    createRemoteVideoElement(data.sid, data.username || data.sid);
+  }
+  updateRemotePlaceholder();
 });
 
 socket.on('room-error', data => {
@@ -668,15 +796,48 @@ socket.on('sign-caption', data => {
 function appendCaption(username, text, confidence, created_at) {
   const capEl = document.getElementById('captionHistory');
   if (!capEl) return;
-  const entry = document.createElement('div');
-  entry.className = 'caption-entry';
-  const who = document.createElement('div'); who.className = 'who'; who.textContent = username || 'unknown';
-  const what = document.createElement('div'); what.className = 'what'; what.textContent = text || '';
-  const when = document.createElement('div'); when.className = 'when'; when.textContent = created_at ? new Date(created_at).toLocaleTimeString() : '';
-  entry.appendChild(who);
-  entry.appendChild(what);
-  entry.appendChild(when);
-  capEl.appendChild(entry);
+  // Render captions as a continuous inline stream.
+  const remoteCount = (document.getElementById('remotesContainer')?.querySelectorAll('.remote-card') || []).length;
+  const onlyLocal = remoteCount === 0;
+  let stream = document.getElementById('captionStream');
+  if (!stream) {
+    stream = document.createElement('div');
+    stream.id = 'captionStream';
+    stream.className = 'caption-stream';
+    capEl.innerHTML = '';
+    capEl.appendChild(stream);
+    lastCaptionAuthor = null;
+  }
+
+  const safeText = text || '';
+  const now = Date.now();
+  // avoid repeating identical caption from same user within short window
+  if (safeText && lastCaptionText === safeText && lastCaptionAuthor === username && (now - lastCaptionTime) < 3000) {
+    return;
+  }
+  if (onlyLocal) {
+    const span = document.createElement('span'); span.className = 'caption-word'; span.textContent = (stream.childElementCount ? ' ' : '') + safeText;
+    stream.appendChild(span);
+    lastCaptionText = safeText;
+    lastCaptionTime = now;
+  } else {
+    const user = username || 'unknown';
+    if (lastCaptionAuthor !== user) {
+      // new speaker
+      const sep = document.createElement('span'); sep.className = 'caption-sep'; sep.textContent = '\u00a0';
+      const label = document.createElement('span'); label.className = 'caption-who'; label.textContent = user + ':';
+      const word = document.createElement('span'); word.className = 'caption-word'; word.textContent = ' ' + safeText;
+      stream.appendChild(sep);
+      stream.appendChild(label);
+      stream.appendChild(word);
+      lastCaptionAuthor = user;
+    } else {
+      const word = document.createElement('span'); word.className = 'caption-word'; word.textContent = ' ' + safeText;
+      stream.appendChild(word);
+    }
+      lastCaptionText = safeText;
+      lastCaptionTime = now;
+  }
   capEl.scrollTop = capEl.scrollHeight;
 }
 
@@ -852,6 +1013,9 @@ initApp();
 const teleprompterEl = document.getElementById('teleprompter');
 let teleQueue = [];
 let teleSpeaking = false;
+let lastCaptionAuthor = null;
+let lastCaptionText = null;
+let lastCaptionTime = 0;
 
 function enqueueTeleprompter(text, who = 'You', confidence = 100) {
   if (!text) return;
@@ -869,11 +1033,12 @@ function processTeleQueue() {
 function speakAndDisplay(text, who) {
   return new Promise((resolve) => {
     if (!teleprompterEl) { resolve(); return; }
-    teleprompterEl.textContent = '';
-    // Use SpeechSynthesis and onboundary to progressively reveal text when supported
+    // Prepare utterance but do not display teleprompter text until speech actually starts
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 1.0; utter.pitch = 1.0;
     let revealed = 0;
+    let fallbackTimer = null;
+
     const showPartial = (charIndex) => {
       if (!teleprompterEl) return;
       revealed = Math.max(revealed, charIndex || 0);
@@ -882,33 +1047,50 @@ function speakAndDisplay(text, who) {
       teleprompterEl.innerHTML = `<span class="revealed">${escapeHtml(shown)}</span><span class="pending">${escapeHtml(pending)}</span>`;
     };
 
-    let boundarySupported = false;
+    // onboundary progressive reveal
     utter.onboundary = (ev) => {
-      boundarySupported = true;
       try { showPartial(ev.charIndex + (ev.charLength || 0)); } catch (e) {}
     };
 
+    // When speech actually starts, initialize display and, if onboundary unsupported, start fallback reveal
+    utter.onstart = () => {
+      // cancel any fallback guard
+      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+      teleprompterEl.textContent = '';
+      // If onboundary unsupported, run a timed reveal based on estimated duration
+      if (!('onboundary' in SpeechSynthesisUtterance.prototype)) {
+        const words = text.split(/\s+/).filter(Boolean);
+        let idx = 0;
+        const total = Math.max(1, words.length);
+        const estDuration = Math.max(600, words.length * 350);
+        const step = Math.max(1, Math.floor(text.length / total));
+        const interval = Math.max(50, Math.floor(estDuration / total));
+        const timer = setInterval(() => {
+          idx += 1;
+          const chars = Math.min(text.length, idx * step);
+          showPartial(chars);
+          if (chars >= text.length) { clearInterval(timer); }
+        }, interval);
+      }
+    };
+
     utter.onend = () => { showPartial(text.length); setTimeout(resolve, 150); };
-    // fallback progressive reveal if onboundary unsupported
-    if (!('onboundary' in SpeechSynthesisUtterance.prototype)) {
-      // approximate duration by words
-      const words = text.split(/\s+/).filter(Boolean);
-      let idx = 0;
-      const total = Math.max(1, words.length);
-      const estDuration = Math.max(600, words.length * 350); // ms
-      const step = Math.max(1, Math.floor(text.length / total));
-      const interval = Math.max(50, Math.floor(estDuration / total));
-      const timer = setInterval(() => {
-        idx += 1;
-        const chars = Math.min(text.length, idx * step);
-        showPartial(chars);
-        if (chars >= text.length) { clearInterval(timer); }
-      }, interval);
-    }
+
+    // If speech never starts due to autoplay/policy, cancel display: wait a short guard and then resolve without showing
+    fallbackTimer = setTimeout(() => {
+      // speech did not start — do not show teleprompter
+      resolve();
+    }, 800);
 
     // speak
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+    } catch (e) {
+      console.error('Speech speak failed', e);
+      if (fallbackTimer) { clearTimeout(fallbackTimer); }
+      resolve();
+    }
   });
 }
 

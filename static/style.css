@@ -408,6 +408,15 @@ button:hover {
     padding: 8px;
     border-radius: 12px;
     background: rgba(255,255,255,0.02);
+.caption-entry { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); }
+.caption-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.caption-entry .who { font-weight: 600; margin-right: 6px; }
+.caption-entry .what { color: #e6eef8; }
+.caption-entry .when { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
+.caption-stream { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.caption-who { font-weight: 700; margin-left: 6px; margin-right: 4px; }
+.caption-word { color: #e6eef8; }
+.caption-sep { width: 8px; }
 }
 
 .teleprompter {
@@ -487,6 +496,15 @@ button:hover {
 }
 
 .history-empty {
+
+.btn-small {
+    background:#1f2937;
+    color:#fff;
+    border-radius:6px;
+    padding:8px 12px;
+    border:1px solid rgba(255,255,255,0.06);
+    cursor:pointer;
+}
     text-align: center;
     color: var(--text-muted);
     padding: 26px 0;
@@ -519,6 +537,12 @@ button:hover {
     .caption-history { max-height: 140px; }
     .stat-widget { padding: 12px; }
 }
+
+/* When there are no remote participants, make the layout single-column so only local video shows */
+body.single-local .video-grid {
+        grid-template-columns: 1fr !important;
+}
+body.single-local .video-grid .video-card + .video-card { display: none; }
 
 .camera-card canvas {
     position: absolute;
