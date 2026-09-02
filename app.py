@@ -22,6 +22,23 @@ import db
 
 try:
     import mediapipe as mp
+    # Some build environments expose mediapipe subpackages differently
+    # (e.g., mediapipe.python.solutions). Normalize to provide `mp.solutions`.
+    if not hasattr(mp, 'solutions'):
+        try:
+            # prefer the python namespace if available
+            import mediapipe.python.solutions as _mp_py_solutions
+            mp.solutions = _mp_py_solutions
+        except Exception:
+            # last-resort: try importing hands directly into a small shim
+            try:
+                from mediapipe.python.solutions import hands as _mp_hands_mod
+                class _Shim:
+                    pass
+                mp.solutions = _Shim()
+                mp.solutions.hands = _mp_hands_mod
+            except Exception:
+                pass
 except ImportError:
     raise ImportError("Run: pip install mediapipe")
 
@@ -68,7 +85,9 @@ def try_load_model():
 
 try_load_model()
 
-mp_hands = mp.solutions.hands
+mp_hands = getattr(mp.solutions, 'hands', None)
+if mp_hands is None:
+    raise RuntimeError('MediaPipe hands module not available (mp.solutions.hands)')
 hands_detector = mp_hands.Hands(
     static_image_mode=True,
     max_num_hands=2,
