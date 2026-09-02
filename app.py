@@ -717,6 +717,35 @@ def on_mic_toggle(data):
         emit('mic-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
 
 
+@socketio.on('publish-caption')
+def on_publish_caption(data):
+    """Accept a client-side caption (predicted sign) and persist/broadcast it.
+
+    Clients may send predictions directly after local model inference. This
+    handler records the caption (using `db.insert_caption`) and emits the
+    `sign-caption` event to the room so all participants (and joining users)
+    receive a consistent caption stream.
+    """
+    room_id = data.get('room') or data.get('room_id')
+    text = data.get('text') or data.get('caption')
+    confidence = float(data.get('confidence') or 0.0)
+    username = sid_to_user.get(request.sid, 'unknown')
+
+    if not room_id or not text:
+        return
+
+    try:
+        db.insert_caption(room_id, username, text, confidence)
+    except Exception:
+        pass
+
+    emit('sign-caption', {
+        'username': username,
+        'text': text,
+        'confidence': round(confidence, 1),
+    }, room=room_id)
+
+
 @socketio.on('end-call')
 def on_end_call(data):
     room_id = data.get('room_id')

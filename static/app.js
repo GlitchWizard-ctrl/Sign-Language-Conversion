@@ -8,6 +8,7 @@ const socket = io({ autoConnect: false, auth: { token: authToken } });
 let localStream = null;
 let peerConnections = {};
 let dataChannels = {};
+let peerUsernames = {};
 let roomId = null;
 let isCaller = false;
 let isCameraOn = false;
@@ -365,12 +366,88 @@ function createRemoteVideoElement(sid, username) {
   const meta = document.createElement('div'); meta.className = 'remote-meta'; meta.textContent = username || sid;
   card.appendChild(meta);
   remotesContainer.appendChild(card);
+  updateRemotePlaceholder();
   return video;
 }
 
 function removeRemoteVideo(sid) {
   const el = document.getElementById(`remote-${sid}`);
   if (el) el.remove();
+  updateRemotePlaceholder();
+}
+
+function updateRemotePlaceholder() {
+  const container = document.getElementById('remotesContainer');
+  const placeholder = document.getElementById('remoteOverlay');
+  if (!container || !placeholder) return;
+  const remotes = container.querySelectorAll('.remote-card');
+  if (remotes.length === 0) {
+    placeholder.style.display = 'flex';
+  } else {
+    placeholder.style.display = 'none';
+  }
+}
+
+function setupDataChannel(sid, ch) {
+  ch.onopen = () => { console.log('Data channel open', sid); };
+  ch.onclose = () => { console.log('Data channel closed', sid); };
+  ch.onerror = (e) => { console.error('Data channel error', sid, e); };
+  ch.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg && msg.type === 'interpret') {
+        // show live interpretation in caption panel immediately
+        const who = peerUsernames[sid] || 'remote';
+        appendCaption(who, msg.sign, msg.confidence, null);
+      }
+    } catch (e) { console.error('data channel msg', e); }
+  };
+}
+
+function createPeerConnection(sid, username, initiator = false) {
+  if (peerConnections[sid]) return peerConnections[sid];
+  const pc = new RTCPeerConnection();
+  peerConnections[sid] = pc;
+  peerUsernames[sid] = username || sid;
+
+  // add local tracks if available
+  if (localStream) {
+    for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
+  }
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit('ice-candidate', { to: sid, room_id: roomId, candidate: e.candidate });
+    }
+  };
+
+  pc.ontrack = (e) => {
+    let video = document.getElementById(`remoteVideo-${sid}`);
+    if (!video) {
+      video = createRemoteVideoElement(sid, username);
+      video.id = `remoteVideo-${sid}`;
+    }
+    try {
+      video.srcObject = e.streams[0];
+      video.play().catch(() => {});
+    } catch (err) { console.error('set remote stream', err); }
+  };
+
+  if (initiator) {
+    try {
+      const dc = pc.createDataChannel('sign-data');
+      setupDataChannel(sid, dc);
+      dataChannels[sid] = dc;
+    } catch (e) { console.warn('createDataChannel failed', e); }
+  } else {
+    pc.ondatachannel = (ev) => {
+      const dc = ev.channel;
+      setupDataChannel(sid, dc);
+      dataChannels[sid] = dc;
+    };
+  }
+
+  return pc;
 }
 
 async function joinRoom(code, createOnly = false) {
@@ -739,6 +816,11 @@ async function predictSign(results) {
           }
         }
       } catch (e) { console.error('send interpret', e); }
+
+      // publish caption to server so it's persisted and visible to all
+      try {
+        if (roomId) socket.emit('publish-caption', { room: roomId, text: data.predicted_class, confidence: data.confidence });
+      } catch (e) { console.error('publish-caption', e); }
     } else {
       const message = data?.message || 'Prediction failed';
       console.warn('Predict error:', message);
