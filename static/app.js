@@ -986,9 +986,11 @@ async function predictSign(results) {
     } else {
       const message = data?.message || 'Prediction failed';
       console.warn('Predict error:', message);
-      signLabelValue.textContent = 'Recognition failed';
+      // Show server message in the UI for debugging (can be changed later)
+      signLabelValue.textContent = message;
       confidenceValue.textContent = '0%';
       frameRateValue.textContent = '—';
+      showToast(message, 'error');
     }
   } catch (err) {
     console.error('Prediction error', err);

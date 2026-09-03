@@ -637,12 +637,35 @@ def api_debug_model():
         "label_loaded": label_encoder is not None,
         "model_file_exists": os.path.exists(model_path),
         "label_file_exists": os.path.exists(label_path),
+        "model_path": model_path,
+        "label_path": label_path,
     }
     try:
+        if os.path.exists(model_path):
+            try:
+                info["model_file_size"] = os.path.getsize(model_path)
+                info["model_file_mtime"] = os.path.getmtime(model_path)
+            except Exception as e:
+                info["model_file_stat_error"] = str(e)
+        if sign_model is not None:
+            try:
+                info["model_type"] = type(sign_model).__name__
+            except Exception:
+                info["model_type"] = None
+        if os.path.exists(label_path):
+            try:
+                info["label_file_size"] = os.path.getsize(label_path)
+                info["label_file_mtime"] = os.path.getmtime(label_path)
+            except Exception as e:
+                info["label_file_stat_error"] = str(e)
         if label_encoder is not None:
-            info["label_classes"] = len(label_encoder.classes_)
-    except Exception:
-        info["label_classes"] = None
+            try:
+                # expose actual class names so we can confirm the admin-trained encoder
+                info["label_classes"] = list(label_encoder.classes_)
+            except Exception:
+                info["label_classes"] = None
+    except Exception as e:
+        info["error"] = str(e)
     return jsonify({"success": True, "info": info})
 
 
