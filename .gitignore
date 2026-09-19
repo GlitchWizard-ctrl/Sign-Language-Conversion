@@ -14,5 +14,6 @@ datasets/isl_data.db
 datasets/*.npy
 models/*.pth
 models/*.pkl
+!models/best_model.pkl.gz
 *.log
 .DS_Store

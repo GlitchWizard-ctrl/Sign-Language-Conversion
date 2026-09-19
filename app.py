@@ -1,5 +1,6 @@
 import os
 import base64
+import gzip
 import pickle
 import re
 import threading
@@ -75,8 +76,9 @@ def try_load_model():
     global sign_model, label_encoder
     try:
         model_path = os.path.join(MODEL_DIR, "best_model.pkl")
+        compressed_model_path = model_path + ".gz"
         # If model missing but an external MODEL_URL is provided, attempt download
-        if not os.path.exists(model_path):
+        if not os.path.exists(model_path) and not os.path.exists(compressed_model_path):
             model_url = os.environ.get('MODEL_URL')
             if model_url:
                 try:
@@ -88,7 +90,10 @@ def try_load_model():
                 except Exception as e:
                     print(f"[app] model download failed: {e}")
 
-        if os.path.exists(model_path):
+        if os.path.exists(compressed_model_path):
+            with gzip.open(compressed_model_path, "rb") as f:
+                sign_model = pickle.load(f)
+        elif os.path.exists(model_path):
             with open(model_path, "rb") as f:
                 sign_model = pickle.load(f)
         # Ensure label encoder is present; allow downloading via LABEL_ENCODER_URL
@@ -118,7 +123,7 @@ try_load_model()
 
 hands_detector = None
 if USE_SERVER_MEDIAPIPE:
-    mp_hands = getattr(mp.solutions, 'hands', None)
+    mp_hands = getattr(getattr(mp, 'solutions', None), 'hands', None)
     if mp_hands is None:
         # if the environment exposes a nonstandard layout we won't crash here
         USE_SERVER_MEDIAPIPE = False
@@ -634,20 +639,22 @@ def api_predict():
 def api_debug_model():
     """Debug endpoint: reports model/label encoder availability and file presence."""
     model_path = os.path.join(MODEL_DIR, "best_model.pkl")
+    compressed_model_path = model_path + ".gz"
     label_path = os.path.join(DATASET_DIR, "label_encoder.pkl")
     info = {
         "model_loaded": sign_model is not None,
         "label_loaded": label_encoder is not None,
-        "model_file_exists": os.path.exists(model_path),
+        "model_file_exists": os.path.exists(model_path) or os.path.exists(compressed_model_path),
         "label_file_exists": os.path.exists(label_path),
-        "model_path": model_path,
+        "model_path": compressed_model_path if os.path.exists(compressed_model_path) else model_path,
         "label_path": label_path,
     }
     try:
-        if os.path.exists(model_path):
+        active_model_path = compressed_model_path if os.path.exists(compressed_model_path) else model_path
+        if os.path.exists(active_model_path):
             try:
-                info["model_file_size"] = os.path.getsize(model_path)
-                info["model_file_mtime"] = os.path.getmtime(model_path)
+                info["model_file_size"] = os.path.getsize(active_model_path)
+                info["model_file_mtime"] = os.path.getmtime(active_model_path)
             except Exception as e:
                 info["model_file_stat_error"] = str(e)
         if sign_model is not None:
