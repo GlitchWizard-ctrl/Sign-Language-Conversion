@@ -337,25 +337,36 @@ function cleanupCall() {
   document.body.classList.remove('in-call');
 }
 
+function leaveCurrentCall({ endedForEveryone = false } = {}) {
+  if (!roomId) return;
+  const payload = { token: authToken, room_id: roomId, room: roomId };
+  if (endedForEveryone) socket.emit('end-call', payload);
+  else socket.emit('leave-call', payload);
+  cleanupCall();
+}
+
 if (endCallBtn) endCallBtn.addEventListener('click', async () => {
   if (!roomId) return;
-  socket.emit('end-call', { token: authToken, room_id: roomId });
-  cleanupCall();
+  leaveCurrentCall({ endedForEveryone: true });
   showToast('Call ended.', 'success');
 });
 
 if (overlayEndCallBtn) overlayEndCallBtn.addEventListener('click', async () => {
   if (!roomId) return;
-  socket.emit('end-call', { token: authToken, room_id: roomId });
-  cleanupCall();
+  leaveCurrentCall({ endedForEveryone: true });
   showToast('Call ended.', 'success');
 });
 
 if (overlayEndCallBtnLocal) overlayEndCallBtnLocal.addEventListener('click', async () => {
   if (!roomId) return;
-  socket.emit('end-call', { token: authToken, room_id: roomId });
-  cleanupCall();
+  leaveCurrentCall({ endedForEveryone: true });
   showToast('Call ended.', 'success');
+});
+
+window.addEventListener('beforeunload', () => {
+  if (roomId && socket?.connected) {
+    socket.emit('leave-call', { token: authToken, room_id: roomId, room: roomId });
+  }
 });
 
 if (overlayToggleCamLocal) overlayToggleCamLocal.addEventListener('click', toggleCamera);
@@ -667,11 +678,11 @@ socket.on('room-joined', async data => {
 });
 
 socket.on('peer-joined', data => {
-  // someone else joined — clear the fallback timer and update UI
+  if (!data || !data.sid) return;
+  if (roomId && data.room_id && data.room_id !== roomId) return;
   console.log('[client] peer-joined', data);
   clearRemoteWaitTimer();
-  // create an empty remote card so UI updates immediately (if not present)
-  if (data && data.sid && !document.getElementById(`remote-${data.sid}`)) {
+  if (!document.getElementById(`remote-${data.sid}`)) {
     createRemoteVideoElement(data.sid, data.username || data.sid);
   }
   updateRemotePlaceholder();
@@ -744,18 +755,9 @@ socket.on('ice-candidate', async data => {
   try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (err) { console.error('Ice candidate error', err); }
 });
 
-socket.on('peer-joined', data => {
-  // another participant joined — show placeholder
-  if (!data || data.room_id !== roomId) return;
-  const sid = data.sid;
-  const username = data.username || sid;
-  if (!sid || sid === socket.id) return;
-  // create an empty remote card so UI updates immediately
-  if (!document.getElementById(`remote-${sid}`)) createRemoteVideoElement(sid, username);
-});
-
 socket.on('peer-left', data => {
-  if (!data || data.room_id !== roomId) return;
+  if (!data) return;
+  if (roomId && data.room_id && data.room_id !== roomId) return;
   const sid = data.sid;
   if (!sid) return;
   if (peerConnections[sid]) {
@@ -763,6 +765,9 @@ socket.on('peer-left', data => {
     delete peerConnections[sid];
   }
   removeRemoteVideo(sid);
+  if (data.username) {
+    showToast(`${data.username} left the call.`, 'info');
+  }
 });
 
 

@@ -692,6 +692,33 @@ room_members = {}
 room_owners = {}
 
 
+def remove_member_from_room(room_id, sid):
+    """Remove a socket from a room and return the updated member payload."""
+    if not room_id or room_id not in room_members:
+        return False
+
+    members = room_members[room_id]
+    if sid not in members:
+        return False
+
+    del members[sid]
+    try:
+        leave_room(room_id, sid=sid)
+    except Exception:
+        pass
+
+    if not members:
+        try:
+            db.end_call(room_id)
+        except Exception:
+            pass
+        room_members.pop(room_id, None)
+        room_owners.pop(room_id, None)
+        return True
+
+    return True
+
+
 @socketio.on("connect")
 def on_connect(auth):
     token = (auth or {}).get("token") if isinstance(auth, dict) else None
@@ -709,10 +736,14 @@ def on_disconnect():
     for room_id, members in list(room_members.items()):
         if sid in members:
             del members[sid]
-            emit("peer-left", {"sid": sid, "username": username}, room=room_id)
+            emit("peer-left", {"sid": sid, "username": username, "room_id": room_id}, room=room_id)
             if not members:
-                db.end_call(room_id)
-                del room_members[room_id]
+                try:
+                    db.end_call(room_id)
+                except Exception:
+                    pass
+                room_members.pop(room_id, None)
+                room_owners.pop(room_id, None)
     print(f"[socket] disconnected: {username} ({sid})")
 
 
@@ -911,15 +942,36 @@ def on_end_call(data):
 
 @socketio.on("leave-call")
 def on_leave_call(data):
-    room_id = data.get("room")
+    room_id = (data or {}).get("room_id") or (data or {}).get("room")
     username = sid_to_user.get(request.sid, "unknown")
-    leave_room(room_id)
-    if room_id in room_members and request.sid in room_members[room_id]:
+
+    if room_id:
+        leave_room(room_id, sid=request.sid)
+
+    if room_id and room_id in room_members and request.sid in room_members[room_id]:
         del room_members[room_id][request.sid]
-        emit("peer-left", {"sid": request.sid, "username": username}, room=room_id)
+        emit("peer-left", {"sid": request.sid, "username": username, "room_id": room_id}, room=room_id)
         if not room_members[room_id]:
-            db.end_call(room_id)
-            del room_members[room_id]
+            try:
+                db.end_call(room_id)
+            except Exception:
+                pass
+            room_members.pop(room_id, None)
+            room_owners.pop(room_id, None)
+
+    # If the room id is missing, still clean the member entry for the current SID.
+    for active_room, members in list(room_members.items()):
+        if request.sid in members:
+            del members[request.sid]
+            emit("peer-left", {"sid": request.sid, "username": username, "room_id": active_room}, room=active_room)
+            if not members:
+                try:
+                    db.end_call(active_room)
+                except Exception:
+                    pass
+                room_members.pop(active_room, None)
+                room_owners.pop(active_room, None)
+                break
 
 
 @socketio.on("sign-frame")
