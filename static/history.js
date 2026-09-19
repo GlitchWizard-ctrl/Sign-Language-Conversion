@@ -4,7 +4,7 @@ document.getElementById('backBtn').addEventListener('click', () => location.href
 
 async function loadHistory() {
   try {
-    const res = await fetch('/api/call-history', { headers: { 'Authorization': authToken } });
+    const res = await fetch('/api/call-history', { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.message || 'Failed');
     const body = document.getElementById('historyBody');

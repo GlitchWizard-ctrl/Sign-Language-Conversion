@@ -97,10 +97,18 @@ usernameLabel.textContent = localStorage.getItem('fullname') || localStorage.get
 userRoleLabel.textContent = (localStorage.getItem('role') || 'user').toUpperCase();
 adminBanner.style.display = 'none';
 
+function buildAuthHeaders(extra = {}) {
+  const token = localStorage.getItem('authToken');
+  return {
+    ...extra,
+    'Authorization': token ? `Bearer ${token}` : ''
+  };
+}
+
 signOutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', {
     method: 'POST',
-    headers: { 'Authorization': authToken }
+    headers: buildAuthHeaders()
   }).catch(() => null);
   localStorage.removeItem('authToken');
   localStorage.removeItem('username');
@@ -165,7 +173,7 @@ if (audioSwitch) {
 async function verifyProfile() {
   try {
     const response = await fetch('/api/profile', {
-      headers: { 'Authorization': authToken }
+      headers: buildAuthHeaders()
     });
     const data = await response.json();
     if (!response.ok || !data.success) {
@@ -985,7 +993,7 @@ async function predictSign(results) {
     console.log('[predict] features length', features.length, 'sample:', features.slice(0,10));
     const response = await fetch('/api/predict', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': authToken },
+      headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ features })
     });
     const data = await response.json();

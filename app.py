@@ -278,12 +278,15 @@ def predict_sign_from_features(features, normalize=False):
 # ------------------------------------------------------------------
 
 def get_token_from_request():
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[7:]
+    auth = (request.headers.get("Authorization", "") or "").strip()
+    if auth:
+        auth_lower = auth.lower()
+        if auth_lower.startswith("bearer "):
+            return auth[7:].strip()
+        return auth
     # The user dashboard sends the token directly while the admin dashboard
     # uses the conventional ``Bearer <token>`` form. Support both.
-    return auth or request.args.get("token")
+    return request.args.get("token")
 
 
 def require_auth(f):

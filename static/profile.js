@@ -15,7 +15,7 @@ function showToast(msg) {
 
 async function loadProfile() {
   try {
-    const res = await fetch('/api/profile', { headers: { 'Authorization': authToken } });
+    const res = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error('Not authorized');
     fullnameEl.value = data.fullname || '';
@@ -27,7 +27,7 @@ saveBtn.addEventListener('click', async () => {
   const payload = { fullname: fullnameEl.value.trim(), email: emailEl.value.trim() };
   if (passwordEl.value) payload.password = passwordEl.value;
   try {
-    const res = await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type':'application/json', 'Authorization': authToken }, body: JSON.stringify(payload) });
+    const res = await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.message || 'Failed');
     showToast('Profile updated');
