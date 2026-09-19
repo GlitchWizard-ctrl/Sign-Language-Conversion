@@ -563,7 +563,18 @@ def _train_model():
     X_train = np.vstack(augmented_X)
     y_train = np.asarray(augmented_y)
 
-    clf = RandomForestClassifier(n_estimators=400, random_state=42, n_jobs=-1, class_weight="balanced_subsample", min_samples_leaf=1)
+    # Keep the live model within the memory limit of small hosting instances.
+    # The previous 400 unrestricted trees exceeded Render's 512 MB limit just
+    # by being unpickled at startup.
+    clf = RandomForestClassifier(
+        n_estimators=45,
+        max_depth=18,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=1,
+        class_weight="balanced_subsample",
+        min_samples_leaf=1,
+    )
     clf.fit(X_train, y_train)
 
     preds = clf.predict(X_test)
@@ -574,12 +585,16 @@ def _train_model():
     )
 
     # Never leave a half-written model if the process is interrupted.
-    for target, value in ((os.path.join(MODEL_DIR, "best_model.pkl"), clf),
+    for target, value in ((os.path.join(MODEL_DIR, "best_model.pkl.gz"), clf),
                           (os.path.join(DATASET_DIR, "label_encoder.pkl"), le_new)):
         fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(target), suffix=".tmp")
         try:
             with os.fdopen(fd, "wb") as f:
-                pickle.dump(value, f)
+                if target.endswith(".gz"):
+                    with gzip.GzipFile(fileobj=f, mode="wb") as compressed:
+                        pickle.dump(value, compressed, protocol=pickle.HIGHEST_PROTOCOL)
+                else:
+                    pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
             os.replace(temp_path, target)
         finally:
             if os.path.exists(temp_path):
