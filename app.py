@@ -70,10 +70,12 @@ db.init_db()
 # ------------------------------------------------------------------
 sign_model = None
 label_encoder = None
+model_load_error = None
 
 
 def try_load_model():
-    global sign_model, label_encoder
+    global sign_model, label_encoder, model_load_error
+    model_load_error = None
     try:
         model_path = os.path.join(MODEL_DIR, "best_model.pkl")
         compressed_model_path = model_path + ".gz"
@@ -116,6 +118,7 @@ def try_load_model():
     except Exception as e:
         sign_model = None
         label_encoder = None
+        model_load_error = str(e)
         print(f"[app] No trained model yet ({e}). Record signs + train from the admin dashboard.")
 
 
@@ -659,6 +662,7 @@ def api_debug_model():
     info = {
         "model_loaded": sign_model is not None,
         "label_loaded": label_encoder is not None,
+        "model_load_error": model_load_error,
         "model_file_exists": os.path.exists(model_path) or os.path.exists(compressed_model_path),
         "label_file_exists": os.path.exists(label_path),
         "model_path": compressed_model_path if os.path.exists(compressed_model_path) else model_path,
