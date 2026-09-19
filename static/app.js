@@ -4,7 +4,12 @@ if (!authToken) {
   window.location.href = 'login.html';
 }
 
-const socket = io({ autoConnect: false, auth: { token: authToken } });
+const socket = io(window.location.origin, {
+  autoConnect: false,
+  transports: ['websocket'],
+  upgrade: false,
+  auth: { token: authToken }
+});
 let localStream = null;
 let peerConnections = {};
 let dataChannels = {};
@@ -924,16 +929,35 @@ hands.onResults(results => {
 function extractFeatures(results) {
   const left = new Array(63).fill(0.0);
   const right = new Array(63).fill(0.0);
-  if (!results.multiHandLandmarks || !results.multiHandedness) return left.concat(right);
+  if (!results || !results.multiHandLandmarks) return left.concat(right);
+
+  const handedness = Array.isArray(results.multiHandedness) ? results.multiHandedness : [];
   for (let i = 0; i < results.multiHandLandmarks.length; i += 1) {
     const handLandmarks = results.multiHandLandmarks[i];
-    const label = results.multiHandedness[i].label || '';
     const coords = [];
     for (const lm of handLandmarks) coords.push(lm.x, lm.y, lm.z);
-    if (label === 'Left') left.splice(0, coords.length, ...coords);
-    if (label === 'Right') right.splice(0, coords.length, ...coords);
+    if (coords.length !== 63) continue;
+
+    const labelObj = handedness[i];
+    const rawLabel = (labelObj && labelObj.label) ? String(labelObj.label).trim().toLowerCase() : '';
+    let handType = rawLabel;
+
+    if (!handType) {
+      const wristX = handLandmarks[0]?.x ?? 0.5;
+      handType = wristX < 0.5 ? 'left' : 'right';
+    }
+
+    if (handType === 'left') left.splice(0, 63, ...coords);
+    else if (handType === 'right') right.splice(0, 63, ...coords);
+    else {
+      const wristX = handLandmarks[0]?.x ?? 0.5;
+      if (wristX < 0.5) left.splice(0, 63, ...coords);
+      else right.splice(0, 63, ...coords);
+    }
   }
-  return left.concat(right);
+
+  const normalized = left.concat(right);
+  return normalized.some(v => Math.abs(v) > 1e-6) ? normalized : new Array(126).fill(0.0);
 }
 
 async function predictSign(results) {
@@ -950,8 +974,14 @@ async function predictSign(results) {
   }
 
   const features = extractFeatures(results);
-  if (!features || features.length !== 126) return;
-    try {
+  if (!features || features.length !== 126 || features.every(v => Math.abs(v) < 1e-6)) {
+    signLabelValue.textContent = 'No hands detected';
+    confidenceValue.textContent = '0%';
+    frameRateValue.textContent = '—';
+    return;
+  }
+
+  try {
     console.log('[predict] features length', features.length, 'sample:', features.slice(0,10));
     const response = await fetch('/api/predict', {
       method: 'POST',
