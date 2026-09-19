@@ -20,7 +20,9 @@ let isCameraOn = false;
 let isMicOn = false;
 let converterEnabled = true;
 let lastPredictionTime = 0;
-const MIN_PREDICT_INTERVAL = 200;
+let lastPredictionFailureAt = 0;
+const MIN_PREDICT_INTERVAL = 1000;
+const PREDICT_FAILURE_BACKOFF_MS = 4000;
 
 // ---- Audio (text-to-speech) state ----
 let audioEnabled = true;
@@ -928,8 +930,10 @@ hands.onResults(results => {
     canvasCtx.drawImage(results.image, 0, 0, localOverlay.width, localOverlay.height);
   }
   drawLocalLandmarks(results);
-  if (converterEnabled && Date.now() - lastPredictionTime > MIN_PREDICT_INTERVAL) {
-    lastPredictionTime = Date.now();
+  const now = Date.now();
+  const failureBackoffActive = now - lastPredictionFailureAt < PREDICT_FAILURE_BACKOFF_MS;
+  if (converterEnabled && !failureBackoffActive && now - lastPredictionTime > MIN_PREDICT_INTERVAL) {
+    lastPredictionTime = now;
     predictSign(results);
   }
 });
@@ -971,13 +975,12 @@ function extractFeatures(results) {
 async function predictSign(results) {
   if (!results || !converterEnabled) return;
 
-  // Real check: were any hands actually detected this frame?
   const hasHands = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
   if (!hasHands) {
     signLabelValue.textContent = 'No hands detected';
     confidenceValue.textContent = '0%';
     frameRateValue.textContent = '—';
-    lastSpokenSign = null;  // reset so the next real sign always gets spoken fresh
+    lastSpokenSign = null;
     return;
   }
 
@@ -996,14 +999,34 @@ async function predictSign(results) {
       headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ features })
     });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let message = 'Prediction failed';
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        if (parsed && parsed.message) message = parsed.message;
+      } catch (e) {}
+
+      if (response.status === 401 || response.status === 403 || response.status === 429) {
+        lastPredictionFailureAt = Date.now();
+      }
+
+      console.warn('Predict error:', response.status, message);
+      signLabelValue.textContent = message;
+      confidenceValue.textContent = '0%';
+      frameRateValue.textContent = '—';
+      if (response.status !== 429) showToast(message, 'error');
+      return;
+    }
+
     const data = await response.json();
-    if (response.ok && data.success) {
+    if (data.success) {
       signLabelValue.textContent = data.predicted_class;
       confidenceValue.textContent = `${Math.round(data.confidence)}%`;
-      frameRateValue.textContent = `${Math.round(1000 / Math.max(1, Date.now() - lastPredictionTime))} fps`;
-
-      // ---- Speak the predicted sign aloud (with cooldown / confidence gate) ----
       const now = Date.now();
+      frameRateValue.textContent = `${Math.round(1000 / Math.max(1, now - lastPredictionTime))} fps`;
+
       const changedSign = data.predicted_class !== lastSpokenSign;
       const cooldownPassed = now - lastSpokenTime > SPEAK_COOLDOWN_MS;
       if (data.confidence >= MIN_CONFIDENCE_TO_SPEAK * 100 && (changedSign || cooldownPassed)) {
@@ -1022,17 +1045,16 @@ async function predictSign(results) {
         }
       } catch (e) { console.error('send interpret', e); }
 
-      // publish caption to server so it's persisted and visible to all
       try {
         if (roomId) socket.emit('publish-caption', { room: roomId, text: data.predicted_class, confidence: data.confidence });
       } catch (e) { console.error('publish-caption', e); }
     } else {
       const message = data?.message || 'Prediction failed';
       console.warn('Predict error:', message);
-      // Show server message in the UI for debugging (can be changed later)
       signLabelValue.textContent = message;
       confidenceValue.textContent = '0%';
       frameRateValue.textContent = '—';
+      lastPredictionFailureAt = Date.now();
       showToast(message, 'error');
     }
   } catch (err) {
@@ -1041,6 +1063,7 @@ async function predictSign(results) {
     signLabelValue.textContent = 'Recognition failed';
     confidenceValue.textContent = '0%';
     frameRateValue.textContent = '—';
+    lastPredictionFailureAt = Date.now();
     showToast(errorMessage, 'error');
   }
 }
