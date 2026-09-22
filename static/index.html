@@ -108,9 +108,11 @@
                         <div class="local-overlay-controls" style="position:absolute; right:12px; bottom:12px; display:flex; gap:8px;">
                             <button id="overlayToggleCamLocal" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
                             <button id="overlayToggleMicLocal" class="overlay-btn" title="Toggle microphone"><i class="fa-solid fa-microphone"></i></button>
+                            <button id="screenShareBtn" class="overlay-btn" title="Share your screen"><i class="fa-solid fa-display"></i></button>
+                            <button id="chatToggleBtn" class="overlay-btn" title="Open meeting chat"><i class="fa-solid fa-comment-dots"></i></button>
                             <button id="overlayInterpreterBtnLocal" class="overlay-btn" title="Toggle converter"><i class="fa-solid fa-wave-square"></i></button>
                             <button id="overlayFullscreenBtnLocal" class="overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
-                            <button id="overlayEndCallBtnLocal" class="overlay-btn danger" title="End call"><i class="fa-solid fa-phone-slash"></i></button>
+                            <button id="overlayEndCallBtnLocal" class="overlay-btn danger" title="Leave call"><i class="fa-solid fa-phone-slash"></i></button>
                         </div>
                     </div>
                 </div>
@@ -127,14 +129,22 @@
                             <div class="remote-placeholder" id="remoteOverlay">Waiting for participant...</div>
                         </div>
                         <div id="interpretationOverlay" class="interpret-overlay" style="display:none"></div>
-                        <div class="call-overlay-controls in-call-only" id="callOverlayControls">
-                            <button id="overlayToggleCam" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
-                            <button id="overlayToggleMic" class="overlay-btn" title="Toggle microphone"><i class="fa-solid fa-microphone"></i></button>
-                            <button id="overlayInterpreterBtn" class="overlay-btn" title="Toggle converter"><i class="fa-solid fa-wave-square"></i></button>
-                            <button id="overlayFullscreenBtn" class="overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
-                            <button id="overlayEndCallBtn" class="overlay-btn danger" title="End call"><i class="fa-solid fa-phone-slash"></i></button>
-                        </div>
+                        <button id="overlayFullscreenBtn" class="remote-fullscreen-btn overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
                     </div>
+                </div>
+            </section>
+
+            <section class="glass-panel meeting-chat" id="meetingChat" hidden>
+                <div class="panel-header panel-header-flex">
+                    <div><h3>Meeting chat</h3><p>Messages are visible only to people in this room.</p></div>
+                    <button id="chatCloseBtn" class="icon-text-btn" title="Close chat"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="panel-body">
+                    <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+                    <form id="chatForm" class="chat-form">
+                        <input id="chatInput" class="text-input" maxlength="500" autocomplete="off" placeholder="Send a message to everyone" />
+                        <button class="btn-primary" type="submit"><i class="fa-solid fa-paper-plane"></i> Send</button>
+                    </form>
                 </div>
             </section>
 

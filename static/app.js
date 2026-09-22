@@ -16,8 +16,11 @@ let dataChannels = {};
 let peerUsernames = {};
 let roomId = null;
 let isCaller = false;
+let roomOwnerSid = null;
 let isCameraOn = false;
 let isMicOn = false;
+let screenStream = null;
+let remoteScreenExpected = {};
 let converterEnabled = true;
 let lastPredictionTime = 0;
 let lastPredictionFailureAt = 0;
@@ -68,6 +71,13 @@ const overlayToggleMicLocal = document.getElementById('overlayToggleMicLocal');
 const overlayEndCallBtnLocal = document.getElementById('overlayEndCallBtnLocal');
 const overlayInterpreterBtnLocal = document.getElementById('overlayInterpreterBtnLocal');
 const overlayFullscreenBtnLocal = document.getElementById('overlayFullscreenBtnLocal');
+const screenShareBtn = document.getElementById('screenShareBtn');
+const chatToggleBtn = document.getElementById('chatToggleBtn');
+const meetingChat = document.getElementById('meetingChat');
+const chatCloseBtn = document.getElementById('chatCloseBtn');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const chatMessages = document.getElementById('chatMessages');
 const converterSwitch = document.getElementById('converterSwitch');
 const converterLabel = document.getElementById('converterLabel');
 // audio (text-to-speech) toggle — optional, only wired up if present in HTML
@@ -244,6 +254,14 @@ function updateCameraUi() {
   } else {
     localOverlay.style.display = 'block';
   }
+  overlayToggleCamLocal?.classList.toggle('is-off', !isCameraOn);
+}
+
+function updateMicUi() {
+  if (toggleMicBtn) toggleMicBtn.innerHTML = isMicOn ? '<i class="fa-solid fa-microphone"></i> Mic ON' : '<i class="fa-solid fa-microphone-slash"></i> Mic OFF';
+  if (overlayToggleMic) overlayToggleMic.innerHTML = isMicOn ? '<i class="fa-solid fa-microphone"></i>' : '<i class="fa-solid fa-microphone-slash"></i>';
+  if (overlayToggleMicLocal) overlayToggleMicLocal.innerHTML = isMicOn ? '<i class="fa-solid fa-microphone"></i>' : '<i class="fa-solid fa-microphone-slash"></i>';
+  overlayToggleMicLocal?.classList.toggle('is-off', !isMicOn);
 }
 
 async function stopCamera() {
@@ -306,7 +324,7 @@ function toggleMic() {
   audioTrack.enabled = !audioTrack.enabled;
   isMicOn = audioTrack.enabled;
   if (toggleMicBtn) toggleMicBtn.innerHTML = isMicOn ? '<i class="fa-solid fa-microphone"></i> Mic ON' : '<i class="fa-solid fa-microphone-slash"></i> Mic OFF';
-  if (overlayToggleMic) overlayToggleMic.innerHTML = isMicOn ? '<i class="fa-solid fa-microphone"></i>' : '<i class="fa-solid fa-microphone-slash"></i>';
+  updateMicUi();
   if (socket && socket.connected && roomId) {
     socket.emit('mic-toggle', { room_id: roomId, enabled: isMicOn });
   }
@@ -331,6 +349,13 @@ function cleanupCall() {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
   }
+  if (screenStream) {
+    const activeScreenStream = screenStream;
+    screenStream = null;
+    activeScreenStream.getTracks().forEach(track => track.stop());
+  }
+  remoteScreenExpected = {};
+  roomOwnerSid = null;
   // reset caption stream
   const capEl = document.getElementById('captionHistory');
   if (capEl) capEl.innerHTML = '';
@@ -342,6 +367,8 @@ function cleanupCall() {
   updateConnectionState(false);
   activeRoomLabel.textContent = 'None';
   roomId = null;
+  if (meetingChat) meetingChat.hidden = true;
+  if (chatMessages) chatMessages.replaceChildren();
   // stop any in-progress speech when the call ends
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   lastSpokenSign = null;
@@ -360,6 +387,17 @@ function leaveCurrentCall({ endedForEveryone = false } = {}) {
   cleanupCall();
 }
 
+function isHost() {
+  return roomOwnerSid ? roomOwnerSid === socket.id : isCaller;
+}
+
+function leaveOrEndCall() {
+  if (!roomId) return;
+  const host = isHost();
+  leaveCurrentCall({ endedForEveryone: host });
+  showToast(host ? 'Meeting ended for everyone.' : 'You left the meeting.', 'success');
+}
+
 if (endCallBtn) endCallBtn.addEventListener('click', async () => {
   if (!roomId) return;
   leaveCurrentCall({ endedForEveryone: true });
@@ -373,9 +411,7 @@ if (overlayEndCallBtn) overlayEndCallBtn.addEventListener('click', async () => {
 });
 
 if (overlayEndCallBtnLocal) overlayEndCallBtnLocal.addEventListener('click', async () => {
-  if (!roomId) return;
-  leaveCurrentCall({ endedForEveryone: true });
-  showToast('Call ended.', 'success');
+  leaveOrEndCall();
 });
 
 window.addEventListener('beforeunload', () => {
@@ -420,6 +456,79 @@ document.addEventListener('fullscreenchange', () => {
   else document.body.classList.remove('in-fullscreen');
 });
 
+async function renegotiatePeer(sid) {
+  const pc = peerConnections[sid];
+  if (!pc || pc.signalingState !== 'stable') return;
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('offer', { room_id: roomId, sdp: offer, to: sid });
+  } catch (err) { console.warn('Could not update shared screen for', sid, err); }
+}
+
+async function stopScreenShare() {
+  if (!screenStream) return;
+  const activeScreenStream = screenStream;
+  screenStream = null;
+  const tracks = activeScreenStream.getVideoTracks();
+  for (const sid of Object.keys(peerConnections)) {
+    const sender = peerConnections[sid].getSenders().find(item => tracks.includes(item.track));
+    if (sender) peerConnections[sid].removeTrack(sender);
+  }
+  activeScreenStream.getTracks().forEach(track => track.stop());
+  screenShareBtn?.classList.remove('active-control');
+  screenShareBtn?.setAttribute('title', 'Share your screen');
+  if (roomId) socket.emit('screen-share-toggle', { room_id: roomId, enabled: false });
+  await Promise.all(Object.keys(peerConnections).map(renegotiatePeer));
+}
+
+async function toggleScreenShare() {
+  if (!roomId) return;
+  if (screenStream) return stopScreenShare();
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+    screenStream = stream;
+    track.onended = () => { if (screenStream) stopScreenShare(); };
+    for (const sid of Object.keys(peerConnections)) peerConnections[sid].addTrack(track, stream);
+    screenShareBtn?.classList.add('active-control');
+    screenShareBtn?.setAttribute('title', 'Stop sharing your screen');
+    socket.emit('screen-share-toggle', { room_id: roomId, enabled: true });
+    await Promise.all(Object.keys(peerConnections).map(renegotiatePeer));
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') showToast('Screen sharing could not start.', 'error');
+  }
+}
+
+screenShareBtn?.addEventListener('click', toggleScreenShare);
+
+function toggleChat(open) {
+  if (!meetingChat) return;
+  meetingChat.hidden = typeof open === 'boolean' ? !open : !meetingChat.hidden;
+  if (!meetingChat.hidden) chatInput?.focus();
+}
+
+function appendChatMessage(username, message, own = false) {
+  if (!chatMessages) return;
+  const item = document.createElement('div');
+  item.className = `chat-message${own ? ' own-message' : ''}`;
+  const author = document.createElement('strong'); author.textContent = own ? 'You' : username;
+  const text = document.createElement('span'); text.textContent = message;
+  item.append(author, text); chatMessages.appendChild(item);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+chatToggleBtn?.addEventListener('click', () => toggleChat());
+chatCloseBtn?.addEventListener('click', () => toggleChat(false));
+chatForm?.addEventListener('submit', event => {
+  event.preventDefault();
+  const message = chatInput?.value.trim();
+  if (!message || !roomId) return;
+  socket.emit('meeting-chat', { room_id: roomId, message });
+  chatInput.value = '';
+});
+
 function createRemoteVideoElement(sid, username) {
   const card = document.createElement('div');
   card.className = 'remote-card';
@@ -434,6 +543,20 @@ function createRemoteVideoElement(sid, username) {
   remotesContainer.appendChild(card);
   console.log('[client] createRemoteVideoElement', sid, username);
   updateRemotePlaceholder();
+  return video;
+}
+
+function createRemoteScreenElement(sid) {
+  const card = document.getElementById(`remote-${sid}`);
+  if (!card) return null;
+  let video = document.getElementById(`remoteScreen-${sid}`);
+  if (video) return video;
+  video = document.createElement('video');
+  video.id = `remoteScreen-${sid}`; video.className = 'remote-screen';
+  video.autoplay = true; video.playsinline = true;
+  card.appendChild(video);
+  const label = document.createElement('span'); label.className = 'screen-share-label'; label.textContent = 'Sharing screen';
+  card.appendChild(label);
   return video;
 }
 
@@ -551,6 +674,9 @@ function createPeerConnection(sid, username, initiator = false) {
   if (localStream) {
     for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
   }
+  if (screenStream) {
+    for (const track of screenStream.getTracks()) pc.addTrack(track, screenStream);
+  }
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
@@ -559,7 +685,9 @@ function createPeerConnection(sid, username, initiator = false) {
   };
 
   pc.ontrack = (e) => {
-    let video = document.getElementById(`remoteVideo-${sid}`);
+    let video = remoteScreenExpected[sid] && e.track.kind === 'video'
+      ? createRemoteScreenElement(sid)
+      : document.getElementById(`remoteVideo-${sid}`);
     if (!video) {
       video = createRemoteVideoElement(sid, username);
       video.id = `remoteVideo-${sid}`;
@@ -674,6 +802,9 @@ socket.on('room-joined', async data => {
   if (!roomId || data.room_id !== roomId) return;
   showToast('Room participants updated.', 'info');
   console.log('[client] room-joined', data);
+  roomOwnerSid = data.room_owner_sid || roomOwnerSid;
+  for (const sid of (data.screen_sharers || [])) remoteScreenExpected[sid] = true;
+  if (overlayEndCallBtnLocal) overlayEndCallBtnLocal.title = isHost() ? 'End meeting for everyone' : 'Leave meeting';
   // Create peer connections and send offers to each existing participant
   const peers = data.peers || [];
   // peers updated — clear fallback timer (we have peer info)
@@ -701,6 +832,18 @@ socket.on('peer-joined', data => {
     createRemoteVideoElement(data.sid, data.username || data.sid);
   }
   updateRemotePlaceholder();
+});
+
+socket.on('screen-share-changed', data => {
+  if (!roomId || data.room_id !== roomId || !data.sid) return;
+  remoteScreenExpected[data.sid] = !!data.enabled;
+  if (!data.enabled) document.getElementById(`remoteScreen-${data.sid}`)?.parentElement?.querySelector('.screen-share-label')?.remove();
+  if (!data.enabled) document.getElementById(`remoteScreen-${data.sid}`)?.remove();
+});
+
+socket.on('meeting-chat', data => {
+  if (!roomId || data.room_id !== roomId || !data.message) return;
+  appendChatMessage(data.username || 'Participant', data.message, data.sid === socket.id);
 });
 
 socket.on('room-error', data => {

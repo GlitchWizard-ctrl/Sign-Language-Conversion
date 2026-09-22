@@ -719,6 +719,12 @@ def serve_static(path):
 sid_to_user = {}
 room_members = {}
 room_owners = {}
+room_screen_sharers = {}
+
+
+def is_room_member(room_id, sid):
+    """Only allow a socket to act inside a room it actually joined."""
+    return bool(room_id and sid in room_members.get(room_id, {}))
 
 
 def remove_member_from_room(room_id, sid):
@@ -743,6 +749,7 @@ def remove_member_from_room(room_id, sid):
             pass
         room_members.pop(room_id, None)
         room_owners.pop(room_id, None)
+        room_screen_sharers.pop(room_id, None)
         return True
 
     return True
@@ -773,6 +780,9 @@ def on_disconnect():
                     pass
                 room_members.pop(room_id, None)
                 room_owners.pop(room_id, None)
+                room_screen_sharers.pop(room_id, None)
+            else:
+                room_screen_sharers.get(room_id, set()).discard(sid)
     print(f"[socket] disconnected: {username} ({sid})")
 
 
@@ -832,7 +842,11 @@ def on_join_room(data):
     emit("caption-history", {"captions": captions}, room=request.sid)
     # Emit room-joined to everyone in the room and log join for diagnostics
     app.logger.info(f"[socket] join-room: {username} -> {room_id}; peers={len(existing_peers)}")
-    emit("room-joined", {"room_id": room_id, "peers": existing_peers, "room_owner": existing_peers[0]['username'] if existing_peers else username, "participants": [p['username'] for p in existing_peers]}, room=room_id)
+    emit("room-joined", {"room_id": room_id, "peers": existing_peers,
+                           "room_owner": room_members[room_id].get(room_owners.get(room_id), username),
+                           "room_owner_sid": room_owners.get(room_id),
+                           "participants": list(room_members[room_id].values()),
+                           "screen_sharers": list(room_screen_sharers.get(room_id, set()))}, room=room_id)
     # notify other participants that someone joined
     emit('peer-joined', {'sid': request.sid, 'username': username, 'room_id': room_id}, room=room_id, include_self=False)
 
@@ -840,7 +854,8 @@ def on_join_room(data):
 @socketio.on("signal")
 def on_signal(data):
     to_sid = data.get("to")
-    if not to_sid:
+    room_id = data.get('room_id') or data.get('room')
+    if not to_sid or not is_room_member(room_id, request.sid) or not is_room_member(room_id, to_sid):
         return
     emit("signal", {
         "from": request.sid,
@@ -853,7 +868,8 @@ def on_signal(data):
 def on_offer(data):
     # Route an SDP offer to a specific peer (target SID expected in 'to')
     to_sid = data.get('to') or data.get('target')
-    if not to_sid:
+    room_id = data.get('room_id') or data.get('room')
+    if not to_sid or not is_room_member(room_id, request.sid) or not is_room_member(room_id, to_sid):
         return
     payload = dict(data)
     payload['from'] = request.sid
@@ -866,7 +882,8 @@ def on_offer(data):
 def on_answer(data):
     # Route an SDP answer to a specific peer
     to_sid = data.get('to') or data.get('target')
-    if not to_sid:
+    room_id = data.get('room_id') or data.get('room')
+    if not to_sid or not is_room_member(room_id, request.sid) or not is_room_member(room_id, to_sid):
         return
     payload = dict(data)
     payload['from'] = request.sid
@@ -879,7 +896,8 @@ def on_answer(data):
 def on_ice_candidate(data):
     # Route ICE candidate to specific peer
     to_sid = data.get('to') or data.get('target')
-    if not to_sid:
+    room_id = data.get('room_id') or data.get('room')
+    if not to_sid or not is_room_member(room_id, request.sid) or not is_room_member(room_id, to_sid):
         return
     payload = dict(data)
     payload['from'] = request.sid
@@ -896,7 +914,7 @@ def on_camera_toggle(data):
     # ignore attempts that try to claim another SID
     if 'sid' in data and data.get('sid') != request.sid:
         return
-    if room_id:
+    if is_room_member(room_id, request.sid):
         emit('camera-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
 
 
@@ -908,8 +926,37 @@ def on_mic_toggle(data):
     # security: do not accept crafted requests claiming to toggle another SID
     if 'sid' in data and data.get('sid') != request.sid:
         return
-    if room_id:
+    if is_room_member(room_id, request.sid):
         emit('mic-changed', {'room_id': room_id, 'enabled': enabled, 'username': username, 'sid': request.sid}, room=room_id)
+
+
+@socketio.on('screen-share-toggle')
+def on_screen_share_toggle(data):
+    room_id = (data or {}).get('room_id') or (data or {}).get('room')
+    if not is_room_member(room_id, request.sid):
+        return
+    sharers = room_screen_sharers.setdefault(room_id, set())
+    if data.get('enabled'):
+        sharers.add(request.sid)
+    else:
+        sharers.discard(request.sid)
+    emit('screen-share-changed', {
+        'room_id': room_id, 'sid': request.sid,
+        'username': sid_to_user.get(request.sid, 'unknown'),
+        'enabled': bool(data.get('enabled'))
+    }, room=room_id)
+
+
+@socketio.on('meeting-chat')
+def on_meeting_chat(data):
+    room_id = (data or {}).get('room_id') or (data or {}).get('room')
+    message = str((data or {}).get('message') or '').strip()
+    if not is_room_member(room_id, request.sid) or not message:
+        return
+    emit('meeting-chat', {
+        'room_id': room_id, 'sid': request.sid,
+        'username': sid_to_user.get(request.sid, 'unknown'), 'message': message[:500]
+    }, room=room_id)
 
 
 @socketio.on('publish-caption')
@@ -928,6 +975,8 @@ def on_publish_caption(data):
 
     if not room_id or not text:
         return
+    if not is_room_member(room_id, request.sid):
+        return
 
     try:
         db.insert_caption(room_id, username, text, confidence)
@@ -945,6 +994,8 @@ def on_publish_caption(data):
 def on_end_call(data):
     room_id = data.get('room_id')
     username = sid_to_user.get(request.sid, 'unknown')
+    if not is_room_member(room_id, request.sid):
+        return
     # Only room owner may end the call for everyone
     owner_sid = room_owners.get(room_id)
     if owner_sid and request.sid != owner_sid:
@@ -961,6 +1012,7 @@ def on_end_call(data):
                 except Exception:
                     pass
             del room_members[room_id]
+        room_screen_sharers.pop(room_id, None)
     # remove owner record
     if room_id in room_owners:
         try:
@@ -979,6 +1031,7 @@ def on_leave_call(data):
 
     if room_id and room_id in room_members and request.sid in room_members[room_id]:
         del room_members[room_id][request.sid]
+        room_screen_sharers.get(room_id, set()).discard(request.sid)
         emit("peer-left", {"sid": request.sid, "username": username, "room_id": room_id}, room=room_id)
         if not room_members[room_id]:
             try:
@@ -987,11 +1040,13 @@ def on_leave_call(data):
                 pass
             room_members.pop(room_id, None)
             room_owners.pop(room_id, None)
+            room_screen_sharers.pop(room_id, None)
 
     # If the room id is missing, still clean the member entry for the current SID.
     for active_room, members in list(room_members.items()):
         if request.sid in members:
             del members[request.sid]
+            room_screen_sharers.get(active_room, set()).discard(request.sid)
             emit("peer-left", {"sid": request.sid, "username": username, "room_id": active_room}, room=active_room)
             if not members:
                 try:
@@ -1000,6 +1055,7 @@ def on_leave_call(data):
                     pass
                 room_members.pop(active_room, None)
                 room_owners.pop(active_room, None)
+                room_screen_sharers.pop(active_room, None)
                 break
 
 
