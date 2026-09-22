@@ -192,12 +192,12 @@ button:hover {
 .call-grid,
 .video-grid {
     display: grid;
-    grid-template-columns: 1.1fr 0.9fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 26px;
 }
 
 .video-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .glass-panel {
@@ -459,10 +459,22 @@ button:hover {
 }
 
 .remotes-container {
+    --remote-grid-columns: 1;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(var(--remote-grid-columns), minmax(0, 1fr));
     gap: 12px;
-    align-items: start;
+    align-items: stretch;
+}
+#remotesContainer:fullscreen,
+#remotesContainer:-webkit-full-screen {
+    background: #02040c;
+    padding: 16px;
+    box-sizing: border-box;
+}
+#remotesContainer:fullscreen .remote-card,
+#remotesContainer:-webkit-full-screen .remote-card {
+    min-height: 0;
+    height: 100%;
 }
 .remote-card {
     position: relative;
@@ -516,8 +528,10 @@ button:hover {
 
 .camera-card {
     position: relative;
-    flex: 1;
-    min-height: 240px;
+    flex: none;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
     border-radius: 18px;
     overflow: hidden;
     background: #02040c;
@@ -543,6 +557,17 @@ body.single-local .video-grid {
         grid-template-columns: 1fr !important;
 }
 body.single-local .video-grid .video-card + .video-card { display: none; }
+body.single-local .video-grid .video-card {
+    width: min(680px, 100%);
+    margin-inline: auto;
+}
+
+.local-video-name {
+    padding: 10px 2px 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+}
 
 .camera-card canvas {
     position: absolute;
@@ -1002,3 +1027,42 @@ body.in-fullscreen #localCameraCard {
 .own-message { align-self: flex-end; background: rgba(99,102,241,.25); }
 .chat-form { display: flex; gap: 10px; margin-top: 14px; }
 .chat-form .text-input { flex: 1; }
+
+/* Compact, balanced meeting-stage layout */
+.video-card { min-height: 0; }
+.remotes-container {
+    grid-auto-rows: minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    padding: 12px;
+}
+.remote-card { min-height: 0; height: 100%; }
+.remote-meta {
+    max-width: calc(100% - 16px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: rgba(15, 23, 42, .82);
+    padding: 7px 10px;
+    border-radius: 999px;
+    color: #f8fafc;
+    font-weight: 600;
+    z-index: 4;
+}
+.local-video-name {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 11px 4px 2px;
+    color: #e2e8f0;
+    font-size: 14px;
+    font-weight: 700;
+}
+.local-video-name::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, .12);
+}

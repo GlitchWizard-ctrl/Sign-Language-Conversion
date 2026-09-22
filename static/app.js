@@ -44,6 +44,7 @@ function speakSign(text) {
 }
 
 const localVideo = document.getElementById('localVideo');
+const localVideoName = document.getElementById('localVideoName');
 const localOverlay = document.getElementById('localOverlay');
 const remotesContainer = document.getElementById('remotesContainer');
 const connectionStatus = document.getElementById('connectionStatus');
@@ -106,6 +107,7 @@ if (userPillBtn && userMenu) {
 }
 
 usernameLabel.textContent = localStorage.getItem('fullname') || localStorage.getItem('username') || 'Guest';
+if (localVideoName) localVideoName.textContent = usernameLabel.textContent;
 userRoleLabel.textContent = (localStorage.getItem('role') || 'user').toUpperCase();
 adminBanner.style.display = 'none';
 
@@ -201,6 +203,7 @@ async function verifyProfile() {
     }
 
     usernameLabel.textContent = data.fullname || data.username || 'Guest';
+    if (localVideoName) localVideoName.textContent = usernameLabel.textContent;
     userRoleLabel.textContent = (data.role || 'user').toUpperCase();
     adminBanner.style.display = 'none';
     localStorage.setItem('role', 'user');
@@ -454,6 +457,7 @@ if (overlayFullscreenBtn) overlayFullscreenBtn.addEventListener('click', () => {
 document.addEventListener('fullscreenchange', () => {
   if (document.fullscreenElement) document.body.classList.add('in-fullscreen');
   else document.body.classList.remove('in-fullscreen');
+  updateRemoteGrid();
 });
 
 async function renegotiatePeer(sid) {
@@ -529,6 +533,20 @@ chatForm?.addEventListener('submit', event => {
   chatInput.value = '';
 });
 
+function updateRemoteGrid() {
+  const container = document.getElementById('remotesContainer');
+  if (!container) return;
+
+  const remotes = container.querySelectorAll('.remote-card');
+  if (remotes.length === 0) {
+    container.style.setProperty('--remote-grid-columns', '1');
+    return;
+  }
+
+  const columnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(remotes.length))));
+  container.style.setProperty('--remote-grid-columns', String(columnCount));
+}
+
 function createRemoteVideoElement(sid, username) {
   const card = document.createElement('div');
   card.className = 'remote-card';
@@ -542,6 +560,7 @@ function createRemoteVideoElement(sid, username) {
   card.appendChild(meta);
   remotesContainer.appendChild(card);
   console.log('[client] createRemoteVideoElement', sid, username);
+  updateRemoteGrid();
   updateRemotePlaceholder();
   return video;
 }
@@ -563,6 +582,7 @@ function createRemoteScreenElement(sid) {
 function removeRemoteVideo(sid) {
   const el = document.getElementById(`remote-${sid}`);
   if (el) el.remove();
+  updateRemoteGrid();
   updateRemotePlaceholder();
 }
 
@@ -578,6 +598,7 @@ function updateRemotePlaceholder() {
     placeholder.style.display = 'none';
     updateVideoLayout(false);
   }
+  updateRemoteGrid();
 }
 
 // Fallback UX: if no remotes appear within X seconds after joining, show actionable message
