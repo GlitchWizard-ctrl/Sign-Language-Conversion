@@ -448,8 +448,8 @@ if (overlayInterpreterBtn) overlayInterpreterBtn.addEventListener('click', () =>
 
 if (overlayFullscreenBtn) overlayFullscreenBtn.addEventListener('click', () => {
   try {
-    const remoteContainer = document.getElementById('remotesContainer') || document.querySelector('.app-container') || document.body;
-    if (!document.fullscreenElement) remoteContainer.requestFullscreen?.();
+    const stage = document.querySelector('.video-grid') || document.querySelector('.app-container') || document.body;
+    if (!document.fullscreenElement) stage.requestFullscreen?.();
     else document.exitFullscreen?.();
   } catch (e) { console.error('Fullscreen error', e); }
 });
@@ -535,16 +535,21 @@ chatForm?.addEventListener('submit', event => {
 
 function updateRemoteGrid() {
   const container = document.getElementById('remotesContainer');
+  const stage = document.querySelector('.video-grid');
   if (!container) return;
 
   const remotes = container.querySelectorAll('.remote-card');
+  const totalTiles = remotes.length + 1;
+
   if (remotes.length === 0) {
     container.style.setProperty('--remote-grid-columns', '1');
+    if (stage) stage.style.setProperty('--meeting-grid-columns', '1');
     return;
   }
 
-  const columnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(remotes.length))));
+  const columnCount = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(totalTiles))));
   container.style.setProperty('--remote-grid-columns', String(columnCount));
+  if (stage) stage.style.setProperty('--meeting-grid-columns', String(columnCount));
 }
 
 function createRemoteVideoElement(sid, username) {

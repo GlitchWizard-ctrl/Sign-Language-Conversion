@@ -192,12 +192,12 @@ button:hover {
 .call-grid,
 .video-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 26px;
 }
 
 .video-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    --meeting-grid-columns: 2;
+    grid-template-columns: repeat(var(--meeting-grid-columns), minmax(0, 1fr));
 }
 
 .glass-panel {
@@ -560,6 +560,21 @@ body.single-local .video-grid .video-card + .video-card { display: none; }
 body.single-local .video-grid .video-card {
     width: min(680px, 100%);
     margin-inline: auto;
+}
+body:not(.single-local) .video-grid .video-card,
+body:not(.single-local) .video-grid .remote-card {
+    min-height: 220px;
+}
+body.in-fullscreen .video-grid {
+    grid-template-columns: repeat(var(--meeting-grid-columns), minmax(0, 1fr));
+    gap: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+    align-items: stretch;
+}
+body.in-fullscreen .video-grid .video-card,
+body.in-fullscreen .video-grid .remote-card {
+    min-height: 180px;
 }
 
 .local-video-name {
