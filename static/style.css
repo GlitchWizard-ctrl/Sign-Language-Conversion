@@ -545,6 +545,42 @@ button:hover {
     object-fit: cover;
 }
 
+.admin-camera-stage {
+    width: min(100%, 520px);
+    margin-inline: auto;
+}
+.admin-camera-controls {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 5;
+    display: flex;
+    gap: 8px;
+}
+.camera-mute[hidden] { display: none !important; }
+.admin-camera-stage .camera-mute:not([hidden]) { display: flex; }
+
+/* The standalone sign recorder uses the same 16:9 camera stage as the dashboard. */
+.record-main {
+    width: min(1180px, calc(100% - 40px));
+    margin: 28px auto 48px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+    gap: 24px;
+    align-items: start;
+}
+.record-camera { margin-top: 18px; }
+.record-camera video { transform: scaleX(-1); }
+.record-card { padding: 24px; }
+.record-card h3 { margin: 0; }
+.train-card { grid-column: 2; }
+.record-main > .card:nth-child(2) { grid-column: 2; }
+@media (max-width: 800px) {
+    .record-main { width: min(100% - 24px, 620px); grid-template-columns: 1fr; gap: 16px; }
+    .record-main > .card:nth-child(2), .train-card { grid-column: 1; }
+    .record-card { padding: 18px; }
+}
+
 @media (max-width: 720px) {
     .remotes-container { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
     .remote-card { min-height: 120px; }

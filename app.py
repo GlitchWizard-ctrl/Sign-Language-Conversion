@@ -134,7 +134,9 @@ if USE_SERVER_MEDIAPIPE:
         hands_detector = mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=2,
-            model_complexity=1,
+            # The recorder and live predictions need low latency; complexity 0
+            # is considerably faster and is sufficient for hand landmarks.
+            model_complexity=0,
             min_detection_confidence=0.6,
         )
 
@@ -436,6 +438,20 @@ def api_admin_users():
     return jsonify({"success": True, "users": db.get_all_users()})
 
 
+@app.route("/api/admin/users/<username>", methods=["DELETE"])
+@require_admin
+def api_admin_delete_user(username):
+    if username == request.username:
+        return jsonify({"success": False, "message": "You cannot delete your own admin account."}), 400
+
+    result = db.delete_user(username)
+    if result == "not_found":
+        return jsonify({"success": False, "message": "User not found."}), 404
+    if result == "last_admin":
+        return jsonify({"success": False, "message": "The last admin account cannot be deleted."}), 409
+    return jsonify({"success": True, "users": db.get_all_users()})
+
+
 @app.route("/api/admin/calls", methods=["GET"])
 @require_admin
 def api_admin_calls():
@@ -508,8 +524,12 @@ def api_admin_delete_samples(label):
     label = label.strip().lower()
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", label):
         return jsonify({"success": False, "message": "Invalid sign label."}), 400
-    db.delete_samples_by_label(label)
-    return jsonify({"success": True, "counts": db.get_sample_counts()})
+    deleted_samples = db.delete_samples_by_label(label)
+    return jsonify({
+        "success": True,
+        "deleted_samples": deleted_samples,
+        "counts": db.get_sample_counts(),
+    })
 
 
 # ------------------------------------------------------------------
@@ -555,6 +575,16 @@ def _train_model():
     test_count = max(len(counts), int(np.ceil(len(samples) * 0.2)))
     X_train, X_test, y_train, y_test = train_test_split(features, y, test_size=test_count, random_state=42, stratify=y)
 
+    # Keep the existing per-class balancing, then prioritize the five number
+    # signs the user is actively tuning. Their 2x multiplier raises recall,
+    # with the expected trade-off of more false positives for those labels.
+    train_counts = Counter(y_train)
+    class_weight = {
+        class_id: (len(y_train) / (len(counts) * train_counts[class_id]))
+        * (2.0 if le_new.classes_[class_id] in {"1", "2", "3", "4", "5"} else 1.0)
+        for class_id in range(len(counts))
+    }
+
     # Expand only the training portion.  Keeping X_test untouched gives the
     # reported accuracy a meaningful measure of real, unseen samples.
     augmented_X = []
@@ -575,7 +605,7 @@ def _train_model():
         max_features="sqrt",
         random_state=42,
         n_jobs=1,
-        class_weight="balanced_subsample",
+        class_weight=class_weight,
         min_samples_leaf=1,
     )
     clf.fit(X_train, y_train)
@@ -970,10 +1000,13 @@ def on_publish_caption(data):
     """
     room_id = data.get('room') or data.get('room_id')
     text = data.get('text') or data.get('caption')
-    confidence = float(data.get('confidence') or 0.0)
+    try:
+        confidence = float(data.get('confidence') or 0.0)
+    except (TypeError, ValueError):
+        return
     username = sid_to_user.get(request.sid, 'unknown')
 
-    if not room_id or not text:
+    if not room_id or not text or not np.isfinite(confidence) or confidence < 50:
         return
     if not is_room_member(room_id, request.sid):
         return
@@ -1069,7 +1102,7 @@ def on_sign_frame(data):
         return
 
     word, confidence = predict_sign_from_b64(image_b64)
-    if word and confidence >= 55:
+    if word and confidence >= 50:
         # persist caption (encrypted at rest if configured)
         try:
             db.insert_caption(room_id, username, word, float(confidence))

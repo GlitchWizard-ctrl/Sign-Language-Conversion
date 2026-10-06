@@ -32,7 +32,7 @@ let audioEnabled = true;
 let lastSpokenSign = null;
 let lastSpokenTime = 0;
 const SPEAK_COOLDOWN_MS = 1800;   // don't repeat the same sign faster than this
-const MIN_CONFIDENCE_TO_SPEAK = 0.6;
+const MIN_CONFIDENCE_TO_SPEAK = 0.5;
 
 function speakSign(text) {
   if (!audioEnabled || !('speechSynthesis' in window)) return;
@@ -983,6 +983,7 @@ socket.on('sign-caption', data => {
 });
 
 function appendCaption(username, text, confidence, created_at) {
+  if (confidence != null && Number(confidence) < 50) return;
   const capEl = document.getElementById('captionHistory');
   if (!capEl) return;
   // Render captions as a continuous inline stream.

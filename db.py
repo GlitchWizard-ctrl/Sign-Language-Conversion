@@ -318,7 +318,8 @@ def get_sample_counts():
 
 def delete_samples_by_label(label):
     with get_connection() as conn:
-        conn.execute("DELETE FROM samples WHERE sign_label = ?", (label,))
+        cursor = conn.execute("DELETE FROM samples WHERE sign_label = ?", (label,))
+        return cursor.rowcount
 
 
 def clear_all_samples():
@@ -456,3 +457,22 @@ def get_all_users():
             "SELECT id, fullname, email, username, role, created_at FROM users ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def delete_user(username):
+    """Delete a user and their login sessions, preserving call history."""
+    with get_connection() as conn:
+        user = conn.execute(
+            "SELECT role FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if user is None:
+            return "not_found"
+        if user["role"] == "admin":
+            admins = conn.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE role = 'admin'"
+            ).fetchone()["c"]
+            if admins <= 1:
+                return "last_admin"
+        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        return "deleted"

@@ -71,18 +71,44 @@
             if (!data.success) return;
             const tbody = document.getElementById("usersTableBody");
             if (data.users.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="history-empty">No users yet.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="history-empty">No users yet.</td></tr>`;
                 return;
             }
+            const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            })[char]);
             tbody.innerHTML = data.users.map(u => `
                 <tr>
-                    <td>${u.username}</td>
-                    <td>${u.fullname}</td>
-                    <td>${u.email}</td>
-                    <td><span class="badge-pill">${u.role}</span></td>
+                    <td>${escapeHTML(u.username)}</td>
+                    <td>${escapeHTML(u.fullname)}</td>
+                    <td>${escapeHTML(u.email)}</td>
+                    <td><span class="badge-pill">${escapeHTML(u.role)}</span></td>
                     <td>${new Date(u.created_at).toLocaleDateString()}</td>
+                    <td>${u.username === username ? "" : `<button class="btn-danger table-btn-sm delete-user-btn" data-username="${escapeHTML(u.username)}" title="Delete ${escapeHTML(u.username)}" aria-label="Delete user ${escapeHTML(u.username)}"><i class="fa-solid fa-trash"></i></button>`}</td>
                 </tr>
             `).join("");
+
+            tbody.querySelectorAll(".delete-user-btn").forEach(button => {
+                button.addEventListener("click", async () => {
+                    const target = button.dataset.username;
+                    if (!confirm(`Delete user '${target}'? Their login sessions will be revoked. Call history will be kept.`)) return;
+                    button.disabled = true;
+                    try {
+                        const result = await authFetch(`/api/admin/users/${encodeURIComponent(target)}`, { method: "DELETE" });
+                        if (!result.success) {
+                            toast(result.message || "Could not delete user.", "error");
+                            return;
+                        }
+                        loadUsers();
+                        loadStats();
+                        toast(`Deleted user '${target}'.`, "success");
+                    } catch (e) {
+                        toast("Could not delete user.", "error");
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+            });
         } catch (e) {}
     }
 
@@ -123,32 +149,71 @@
     const autoTrainToggle = document.getElementById("autoTrainToggle");
     const statusEl = document.getElementById("captureStatus");
     const autoTrainStatusEl = document.getElementById("autoTrainStatus");
+    const cameraToggleBtn = document.getElementById("cameraToggleBtn");
+    const cameraOffHint = document.getElementById("cameraOffHint");
     let burstInterval = null;
+    let captureInProgress = false;
+    let cameraStream = null;
+
+    function updateCameraControls(enabled) {
+        cameraOffHint.hidden = enabled;
+        cameraToggleBtn.setAttribute("aria-pressed", String(enabled));
+        cameraToggleBtn.title = enabled ? "Turn camera off" : "Turn camera on";
+        cameraToggleBtn.setAttribute("aria-label", cameraToggleBtn.title);
+        cameraToggleBtn.innerHTML = `<i class="fa-solid ${enabled ? "fa-video" : "fa-video-slash"}"></i>`;
+    }
 
     async function startCamera() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 20, max: 24 } }
+            });
+            video.srcObject = cameraStream;
+            await video.play();
+            updateCameraControls(true);
         } catch (e) {
+            cameraStream = null;
+            updateCameraControls(false);
             toast("Could not access camera.", "error");
         }
     }
+
+    function stopCamera() {
+        cameraStream?.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+        video.srcObject = null;
+        clearInterval(burstInterval);
+        burstInterval = null;
+        burstToggle.checked = false;
+        updateCameraControls(false);
+    }
+
+    cameraToggleBtn.addEventListener("click", () => cameraStream ? stopCamera() : startCamera());
     startCamera();
 
     function grabFrameB64() {
         canvas.width = 320;
-        canvas.height = 240;
-        ctx.drawImage(video, 0, 0, 320, 240);
+        canvas.height = Math.max(180, Math.round(320 * (video.videoHeight || 360) / (video.videoWidth || 640)));
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         return canvas.toDataURL("image/jpeg", 0.7);
     }
 
     async function captureOnce() {
+        if (captureInProgress) return;
+        if (!cameraStream) {
+            statusEl.textContent = "Turn the camera on to capture a sample.";
+            statusEl.className = "capture-status error";
+            return;
+        }
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
         const label = labelInput.value.trim().toLowerCase();
         if (!label) {
             statusEl.textContent = "Enter a sign label first.";
             statusEl.className = "capture-status error";
             return;
         }
+        captureInProgress = true;
+        captureBtn.disabled = true;
         const image = grabFrameB64();
         try {
             const data = await authFetch("/api/admin/samples", {
@@ -168,6 +233,9 @@
         } catch (e) {
             statusEl.textContent = "✗ Server unreachable.";
             statusEl.className = "capture-status error";
+        } finally {
+            captureInProgress = false;
+            captureBtn.disabled = false;
         }
     }
 
@@ -176,7 +244,7 @@
     burstToggle.addEventListener("change", () => {
         if (burstToggle.checked) {
             cancelAutoTrain();
-            burstInterval = setInterval(captureOnce, 500);
+            burstInterval = setInterval(captureOnce, 250);
         } else {
             clearInterval(burstInterval);
             burstInterval = null;
@@ -211,7 +279,8 @@
                     const data = await authFetch(`/api/admin/samples/${encodeURIComponent(label)}`, { method: "DELETE" });
                     if (data.success) {
                         renderCounts(data.counts);
-                        toast(`Deleted samples for '${label}'`, "success");
+                        toast(`Deleted ${data.deleted_samples} samples for '${label}'. Retraining without that sign...`, "success");
+                        runTraining(true);
                     }
                 } catch (e) {}
             });
@@ -231,7 +300,7 @@
         const resultEl = document.getElementById("trainResult");
 
         if (isAuto) {
-            autoTrainStatusEl.textContent = "Auto-training on newly recorded samples...";
+            autoTrainStatusEl.textContent = "Auto-training from the current saved samples...";
             autoTrainStatusEl.className = "capture-status ok";
         } else {
             btn.disabled = true;

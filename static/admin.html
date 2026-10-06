@@ -79,11 +79,15 @@
                 <div class="glass-panel video-card">
                     <div class="panel-header">
                         <h3>Record a Sign</h3>
-                        <p>Capture varied poses, positions and lighting. Aim for 20+ samples per sign before training.</p>
+                        <p>Capture varied poses, positions and lighting. Aim for 20+ real samples per sign. Landmark variations are added during training; they do not inflate the sample count.</p>
                     </div>
                     <div class="panel-body">
-                        <div class="camera-card" id="cameraCard">
+                        <div class="camera-card admin-camera-stage" id="cameraCard">
                             <video id="preview" autoplay playsinline muted></video>
+                            <div class="camera-mute" id="cameraOffHint" hidden>Camera off</div>
+                            <div class="local-overlay-controls admin-camera-controls">
+                                <button id="cameraToggleBtn" class="overlay-btn" type="button" title="Turn camera off" aria-label="Turn camera off" aria-pressed="true"><i class="fa-solid fa-video"></i></button>
+                            </div>
                             <canvas id="captureCanvas" style="display:none;"></canvas>
                         </div>
 
@@ -99,7 +103,7 @@
                         </div>
 
                         <div class="switch-row">
-                            <span>Burst mode (capture every 500ms; duplicates are skipped)</span>
+                            <span>Burst mode (rapid capture; near-duplicates are skipped)</span>
                             <label class="switch">
                                 <input type="checkbox" id="burstToggle">
                                 <span class="slider"></span>
@@ -164,10 +168,10 @@
                     <div class="history-panel">
                         <table class="history-table">
                             <thead>
-                                <tr><th>Username</th><th>Full Name</th><th>Email</th><th>Role</th><th>Joined</th></tr>
+                                <tr><th>Username</th><th>Full Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
                             </thead>
                             <tbody id="usersTableBody">
-                                <tr><td colspan="5" class="history-empty">Loading...</td></tr>
+                                <tr><td colspan="6" class="history-empty">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>

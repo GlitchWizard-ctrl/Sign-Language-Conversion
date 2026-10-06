@@ -24,18 +24,26 @@
             <section class="card glass-panel record-card">
                 <h3><i class="fa-solid fa-camera"></i> Record a Sign</h3>
 
-                <video id="preview" autoplay playsinline muted></video>
+                <div class="camera-card record-camera admin-camera-stage">
+                    <video id="preview" autoplay playsinline muted></video>
+                    <div class="camera-mute" id="cameraOffHint" hidden>Camera off</div>
+                    <div class="local-overlay-controls admin-camera-controls">
+                        <button id="cameraToggleBtn" class="overlay-btn" type="button" title="Turn camera off" aria-label="Turn camera off" aria-pressed="true"><i class="fa-solid fa-video"></i></button>
+                    </div>
+                </div>
 
                 <div class="form-group" style="margin-top:16px;">
                     <label for="signLabel">Sign label</label>
                     <input id="signLabel" type="text" class="form-input" placeholder="e.g. hello, thank_you, water">
                 </div>
 
+                <p class="muted capture-hint">Capture real, varied examples. Near-duplicate frames are skipped; landmark augmentation is applied during training, so displayed counts reflect real captures.</p>
+
                 <div class="record-actions">
                     <button id="captureBtn" class="btn-primary"><i class="fa-solid fa-hand"></i> Capture Sample</button>
                     <label class="switch-label" style="margin-left:auto;">
                         <input type="checkbox" id="burstToggle">
-                        Burst mode (auto-capture every 500ms)
+                    Burst mode (captures as fast as processing allows)
                     </label>
                 </div>
 
