@@ -5,11 +5,27 @@ import pickle
 import re
 import threading
 import tempfile
+import sys
 from functools import wraps
 from collections import Counter
 
 import numpy as np
 import cv2
+
+# Models serialized with NumPy 2 may reference ``numpy._core`` when loaded.
+# The current deployment keeps NumPy below 2 for MediaPipe compatibility, where
+# the same modules are exposed as ``numpy.core``. Alias those module paths so
+# existing model pickles remain readable without changing the runtime stack.
+try:
+    import numpy._core.numeric  # noqa: F401
+except ImportError:
+    import numpy.core as _numpy_core
+    import numpy.core.numeric as _numpy_numeric
+    import numpy.core.multiarray as _numpy_multiarray
+
+    sys.modules.setdefault("numpy._core", _numpy_core)
+    sys.modules.setdefault("numpy._core.numeric", _numpy_numeric)
+    sys.modules.setdefault("numpy._core.multiarray", _numpy_multiarray)
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, join_room, leave_room, emit
