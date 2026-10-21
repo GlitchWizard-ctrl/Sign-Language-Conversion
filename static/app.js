@@ -13,6 +13,7 @@ const socket = io(window.location.origin, {
 let localStream = null;
 let peerConnections = {};
 let peerDisconnectTimers = {};
+let peerConnectTimers = {};
 let dataChannels = {};
 let peerUsernames = {};
 let roomId = null;
@@ -593,6 +594,8 @@ function createRemoteScreenElement(sid) {
 function removeRemoteVideo(sid) {
   clearTimeout(peerDisconnectTimers[sid]);
   delete peerDisconnectTimers[sid];
+  clearTimeout(peerConnectTimers[sid]);
+  delete peerConnectTimers[sid];
   if (peerConnections[sid]) {
     try { peerConnections[sid].close(); } catch (e) {}
     delete peerConnections[sid];
@@ -722,6 +725,14 @@ function createPeerConnection(sid, username, initiator = false) {
   peerConnections[sid] = pc;
   peerUsernames[sid] = username || sid;
 
+  // A peer that left during negotiation can leave a tile stuck on
+  // "Connecting to video…" without reaching the disconnected state.
+  peerConnectTimers[sid] = setTimeout(() => {
+    if (peerConnections[sid] === pc && pc.connectionState !== 'connected') {
+      removeRemoteVideo(sid);
+    }
+  }, 25000);
+
   // add local tracks if available
   if (localStream) {
     for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
@@ -738,7 +749,14 @@ function createPeerConnection(sid, username, initiator = false) {
 
   pc.onconnectionstatechange = () => {
     const state = pc.connectionState;
-    if (state === 'connected' || state === 'connecting' || state === 'new') {
+    if (state === 'connected') {
+      clearTimeout(peerConnectTimers[sid]);
+      delete peerConnectTimers[sid];
+      clearTimeout(peerDisconnectTimers[sid]);
+      delete peerDisconnectTimers[sid];
+      return;
+    }
+    if (state === 'connecting' || state === 'new') {
       clearTimeout(peerDisconnectTimers[sid]);
       delete peerDisconnectTimers[sid];
       return;
