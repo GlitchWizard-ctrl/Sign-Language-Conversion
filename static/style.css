@@ -187,6 +187,7 @@ button:hover {
     padding: 32px 40px 40px;
     display: grid;
     gap: 26px;
+    align-content: start;
 }
 
 .call-grid,
@@ -482,6 +483,7 @@ button:hover {
     overflow: hidden;
     background: rgba(0,0,0,0.35);
     min-height: 140px;
+    min-width: 0;
 }
 .remote-card video {
     width: 100%;
@@ -506,6 +508,20 @@ button:hover {
     color: var(--text-muted);
     padding: 12px;
 }
+.remote-video-placeholder {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    color: var(--text-muted);
+    background: rgba(2, 4, 12, .82);
+    text-align: center;
+    pointer-events: none;
+}
+.remote-video-placeholder[hidden] { display: none; }
 
 .history-empty {
 
@@ -1088,6 +1104,43 @@ body.in-fullscreen #localCameraCard {
     padding: 12px;
 }
 .remote-card { min-height: 0; height: 100%; }
+.video-grid {
+    align-items: start;
+    grid-auto-rows: max-content;
+}
+.video-grid > .video-card {
+    align-self: start;
+    min-width: 0;
+    height: auto;
+}
+.video-card > .camera-card {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    flex: none;
+}
+.camera-card > video,
+.remote-card > video {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.remotes-container {
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    height: auto;
+    grid-auto-rows: minmax(0, 1fr);
+}
+.remote-card {
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+}
+.remote-video-placeholder {
+    background: rgba(2, 4, 12, .58);
+}
 .remote-meta {
     max-width: calc(100% - 16px);
     overflow: hidden;
@@ -1116,4 +1169,96 @@ body.in-fullscreen #localCameraCard {
     border-radius: 50%;
     background: #22c55e;
     box-shadow: 0 0 0 4px rgba(34, 197, 94, .12);
+}
+
+/* Unified meeting grid: local and remote participants share equal cells. */
+.video-grid {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    min-width: 0;
+}
+body.in-call .video-grid { display: block; }
+.remotes-container {
+    --remote-grid-columns: 1;
+    --remote-grid-rows: 1;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(var(--remote-grid-columns), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--remote-grid-rows), minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+    height: min(76vh, 900px);
+    min-height: 360px;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.remotes-container > .remote-card {
+    width: auto;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    aspect-ratio: auto;
+}
+.local-participant > .camera-card {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: inherit;
+}
+.local-video-name {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 5;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, .82);
+}
+.remote-placeholder {
+    position: absolute;
+    z-index: 8;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    width: max-content;
+    max-width: calc(100% - 40px);
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, .86);
+}
+.remote-fullscreen-btn { position: absolute; right: 24px; bottom: 24px; z-index: 20; }
+.video-grid:fullscreen {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    padding: 0;
+    background: #02040c;
+}
+.video-grid:fullscreen .remotes-container {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 12px;
+}
+body.in-fullscreen #localCameraCard {
+    position: absolute !important;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: auto !important;
+    right: auto;
+    bottom: auto;
+    box-shadow: none;
+}
+
+@media (max-width: 720px) {
+    .remotes-container { gap: 8px; padding: 8px; height: min(70vh, 760px); min-height: 320px; }
+    .remote-fullscreen-btn { right: 16px; bottom: 16px; }
 }

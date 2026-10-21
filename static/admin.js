@@ -154,6 +154,57 @@
     let burstInterval = null;
     let captureInProgress = false;
     let cameraStream = null;
+    let handDetector = null;
+    let pendingLandmarkResult = null;
+
+    function captureFeatures(results) {
+        const left = new Array(63).fill(0);
+        const right = new Array(63).fill(0);
+        const landmarks = results?.multiHandLandmarks || [];
+        const handedness = results?.multiHandedness || [];
+        landmarks.forEach((hand, index) => {
+            const coords = hand.flatMap(point => [point.x, point.y, point.z]);
+            if (coords.length !== 63) return;
+            const label = String(handedness[index]?.label || "").toLowerCase();
+            const side = label || (hand[0].x < 0.5 ? "left" : "right");
+            (side === "left" ? left : right).splice(0, 63, ...coords);
+        });
+        const features = left.concat(right);
+        return features.some(value => Math.abs(value) > 1e-6) ? features : null;
+    }
+
+    function getCaptureFeatures() {
+        if (typeof window.Hands !== "function") {
+            return Promise.reject(new Error("Hand tracking could not load. Refresh the page and try again."));
+        }
+        if (!handDetector) {
+            handDetector = new window.Hands({
+                locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            handDetector.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6 });
+            handDetector.onResults(results => {
+                if (!pendingLandmarkResult) return;
+                const resolve = pendingLandmarkResult;
+                pendingLandmarkResult = null;
+                resolve(captureFeatures(results));
+            });
+        }
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                pendingLandmarkResult = null;
+                reject(new Error("Hand tracking timed out. Try capturing again."));
+            }, 10000);
+            pendingLandmarkResult = features => {
+                clearTimeout(timeout);
+                resolve(features);
+            };
+            handDetector.send({ image: video }).catch(error => {
+                clearTimeout(timeout);
+                pendingLandmarkResult = null;
+                reject(error);
+            });
+        });
+    }
 
     function updateCameraControls(enabled) {
         cameraOffHint.hidden = enabled;
@@ -214,12 +265,17 @@
         }
         captureInProgress = true;
         captureBtn.disabled = true;
-        const image = grabFrameB64();
         try {
+            const features = await getCaptureFeatures();
+            if (!features) {
+                statusEl.textContent = "No hand detected. Keep your hand in frame and try again.";
+                statusEl.className = "capture-status error";
+                return;
+            }
             const data = await authFetch("/api/admin/samples", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ label, image })
+                body: JSON.stringify({ label, features })
             });
             if (data.success) {
                 statusEl.textContent = `✓ Captured '${label}' — ${data.count} samples so far.`;
@@ -231,7 +287,7 @@
                 statusEl.className = "capture-status error";
             }
         } catch (e) {
-            statusEl.textContent = "✗ Server unreachable.";
+            statusEl.textContent = `✗ ${e.message || "Could not process this capture."}`;
             statusEl.className = "capture-status error";
         } finally {
             captureInProgress = false;

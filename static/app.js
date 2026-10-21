@@ -12,6 +12,7 @@ const socket = io(window.location.origin, {
 });
 let localStream = null;
 let peerConnections = {};
+let peerDisconnectTimers = {};
 let dataChannels = {};
 let peerUsernames = {};
 let roomId = null;
@@ -26,6 +27,9 @@ let lastPredictionTime = 0;
 let lastPredictionFailureAt = 0;
 const MIN_PREDICT_INTERVAL = 1000;
 const PREDICT_FAILURE_BACKOFF_MS = 4000;
+const rtcConfiguration = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+};
 
 // ---- Audio (text-to-speech) state ----
 let audioEnabled = true;
@@ -346,6 +350,10 @@ function cleanupCall() {
     delete dataChannels[sid];
     removeRemoteVideo(sid);
   }
+  for (const card of [...remotesContainer.querySelectorAll('.remote-peer')]) {
+    const sid = card.dataset.sid || card.id.replace(/^remote-/, '');
+    if (sid) removeRemoteVideo(sid);
+  }
   if (localCamera?.stop) localCamera.stop();
   localCamera = null;
   if (localStream) {
@@ -433,8 +441,8 @@ if (overlayInterpreterBtnLocal) overlayInterpreterBtnLocal.addEventListener('cli
 });
 if (overlayFullscreenBtnLocal) overlayFullscreenBtnLocal.addEventListener('click', () => {
   try {
-    const localCard = document.getElementById('localCameraCard') || document.querySelector('.app-container') || document.body;
-    if (!document.fullscreenElement) localCard.requestFullscreen?.();
+    const stage = document.getElementById('meetingStage') || document.querySelector('.app-container') || document.body;
+    if (!document.fullscreenElement) stage.requestFullscreen?.();
     else document.exitFullscreen?.();
   } catch (e) { console.error('Fullscreen error', e); }
 });
@@ -448,7 +456,7 @@ if (overlayInterpreterBtn) overlayInterpreterBtn.addEventListener('click', () =>
 
 if (overlayFullscreenBtn) overlayFullscreenBtn.addEventListener('click', () => {
   try {
-    const stage = document.querySelector('.video-grid') || document.querySelector('.app-container') || document.body;
+    const stage = document.getElementById('meetingStage') || document.querySelector('.app-container') || document.body;
     if (!document.fullscreenElement) stage.requestFullscreen?.();
     else document.exitFullscreen?.();
   } catch (e) { console.error('Fullscreen error', e); }
@@ -535,35 +543,33 @@ chatForm?.addEventListener('submit', event => {
 
 function updateRemoteGrid() {
   const container = document.getElementById('remotesContainer');
-  const stage = document.querySelector('.video-grid');
   if (!container) return;
 
-  const remotes = container.querySelectorAll('.remote-card');
-  const totalTiles = remotes.length + 1;
-
-  if (remotes.length === 0) {
-    container.style.setProperty('--remote-grid-columns', '1');
-    if (stage) stage.style.setProperty('--meeting-grid-columns', '1');
-    return;
-  }
-
-  const columnCount = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(totalTiles))));
+  const participantCount = container.querySelectorAll('.remote-card').length;
+  const columnCount = Math.max(1, Math.ceil(Math.sqrt(participantCount)));
+  const rowCount = Math.max(1, Math.ceil(participantCount / columnCount));
   container.style.setProperty('--remote-grid-columns', String(columnCount));
-  if (stage) stage.style.setProperty('--meeting-grid-columns', String(columnCount));
+  container.style.setProperty('--remote-grid-rows', String(rowCount));
 }
 
 function createRemoteVideoElement(sid, username) {
   const card = document.createElement('div');
-  card.className = 'remote-card';
+  card.className = 'remote-card remote-peer';
   card.id = `remote-${sid}`;
   card.setAttribute('data-sid', sid);
+  card.dataset.username = username || sid;
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsinline = true;
   card.appendChild(video);
-  const meta = document.createElement('div'); meta.className = 'remote-meta'; meta.textContent = username || sid;
+  const placeholder = document.createElement('div');
+  placeholder.className = 'remote-video-placeholder';
+  placeholder.textContent = 'Connecting to video…';
+  card.appendChild(placeholder);
+  const meta = document.createElement('div'); meta.className = 'remote-meta';
   card.appendChild(meta);
   remotesContainer.appendChild(card);
+  updateDuplicatePeerLabels(username || sid);
   console.log('[client] createRemoteVideoElement', sid, username);
   updateRemoteGrid();
   updateRemotePlaceholder();
@@ -585,17 +591,37 @@ function createRemoteScreenElement(sid) {
 }
 
 function removeRemoteVideo(sid) {
+  clearTimeout(peerDisconnectTimers[sid]);
+  delete peerDisconnectTimers[sid];
+  if (peerConnections[sid]) {
+    try { peerConnections[sid].close(); } catch (e) {}
+    delete peerConnections[sid];
+  }
+  delete dataChannels[sid];
+  delete peerUsernames[sid];
+  delete remoteScreenExpected[sid];
   const el = document.getElementById(`remote-${sid}`);
+  const username = el?.dataset.username;
   if (el) el.remove();
+  if (username) updateDuplicatePeerLabels(username);
   updateRemoteGrid();
   updateRemotePlaceholder();
+}
+
+function updateDuplicatePeerLabels(username) {
+  const cards = [...remotesContainer.querySelectorAll('.remote-peer')]
+    .filter(card => card.dataset.username === username);
+  cards.forEach((card, index) => {
+    const meta = card.querySelector('.remote-meta');
+    if (meta) meta.textContent = cards.length > 1 ? `${username} · Connection ${index + 1}` : username;
+  });
 }
 
 function updateRemotePlaceholder() {
   const container = document.getElementById('remotesContainer');
   const placeholder = document.getElementById('remoteOverlay');
   if (!container || !placeholder) return;
-  const remotes = container.querySelectorAll('.remote-card');
+  const remotes = container.querySelectorAll('.remote-peer');
   if (remotes.length === 0) {
     placeholder.style.display = 'flex';
     updateVideoLayout(true);
@@ -618,7 +644,7 @@ function startRemoteWaitTimer() {
     // if still no remotes, show share/copy action
     const container = document.getElementById('remotesContainer');
     if (!container) return;
-    const remotes = container.querySelectorAll('.remote-card');
+    const remotes = container.querySelectorAll('.remote-peer');
     if (remotes.length > 0) return;
     placeholder.textContent = 'No other participants found.';
     // add copy-code button
@@ -652,8 +678,7 @@ function clearRemoteWaitTimer() {
 }
 
 function updateVideoLayout(singleLocal) {
-  if (singleLocal) document.body.classList.add('single-local');
-  else document.body.classList.remove('single-local');
+  document.body.classList.remove('single-local');
 }
 
 // Support older server event name 'existing-peers' used by some join flows
@@ -692,7 +717,7 @@ function setupDataChannel(sid, ch) {
 
 function createPeerConnection(sid, username, initiator = false) {
   if (peerConnections[sid]) return peerConnections[sid];
-  const pc = new RTCPeerConnection();
+  const pc = new RTCPeerConnection(rtcConfiguration);
   peerConnections[sid] = pc;
   peerUsernames[sid] = username || sid;
 
@@ -710,6 +735,30 @@ function createPeerConnection(sid, username, initiator = false) {
     }
   };
 
+  pc.onconnectionstatechange = () => {
+    const state = pc.connectionState;
+    if (state === 'connected' || state === 'connecting' || state === 'new') {
+      clearTimeout(peerDisconnectTimers[sid]);
+      delete peerDisconnectTimers[sid];
+      return;
+    }
+    if (state !== 'failed' && state !== 'disconnected' && state !== 'closed') return;
+    if (state === 'closed' || state === 'failed') {
+      removeRemoteVideo(sid);
+      return;
+    }
+    const card = document.getElementById(`remote-${sid}`);
+    const placeholder = card?.querySelector('.remote-video-placeholder');
+    if (placeholder) {
+      placeholder.textContent = 'Connection interrupted';
+      placeholder.hidden = false;
+    }
+    clearTimeout(peerDisconnectTimers[sid]);
+    peerDisconnectTimers[sid] = setTimeout(() => {
+      if (peerConnections[sid] === pc && pc.connectionState === 'disconnected') removeRemoteVideo(sid);
+    }, 10000);
+  };
+
   pc.ontrack = (e) => {
     let video = remoteScreenExpected[sid] && e.track.kind === 'video'
       ? createRemoteScreenElement(sid)
@@ -721,7 +770,25 @@ function createPeerConnection(sid, username, initiator = false) {
     try {
       console.log('[client] ontrack for', sid, 'streams:', e.streams && e.streams.length);
       video.srcObject = e.streams[0];
-      video.play().catch(() => {});
+      if (e.track.kind === 'video') {
+        const waiting = document.getElementById(`remote-${sid}`)?.querySelector('.remote-video-placeholder');
+        const showUnavailable = () => {
+          if (waiting) {
+            waiting.textContent = 'Video unavailable';
+            waiting.hidden = false;
+          }
+        };
+        video.addEventListener('playing', () => { if (waiting) waiting.hidden = true; }, { once: true });
+        e.track.addEventListener('ended', showUnavailable, { once: true });
+        e.track.addEventListener('mute', showUnavailable, { once: true });
+      }
+      video.play().catch(() => {
+        const waiting = document.getElementById(`remote-${sid}`)?.querySelector('.remote-video-placeholder');
+        if (waiting) {
+          waiting.textContent = 'Waiting for video…';
+          waiting.hidden = false;
+        }
+      });
     } catch (err) { console.error('set remote stream', err); }
   };
 
@@ -833,6 +900,12 @@ socket.on('room-joined', async data => {
   if (overlayEndCallBtnLocal) overlayEndCallBtnLocal.title = isHost() ? 'End meeting for everyone' : 'Leave meeting';
   // Create peer connections and send offers to each existing participant
   const peers = data.peers || [];
+  // Reconcile tiles against the server's current room roster when joining/rejoining.
+  const activePeerIds = new Set(peers.map(peer => peer && peer.sid).filter(Boolean));
+  for (const card of [...remotesContainer.querySelectorAll('.remote-peer')]) {
+    const sid = card.id.startsWith('remote-') ? card.id.slice('remote-'.length) : '';
+    if (sid && !activePeerIds.has(sid)) removeRemoteVideo(sid);
+  }
   // peers updated — clear fallback timer (we have peer info)
   clearRemoteWaitTimer();
   for (const p of peers) {
@@ -908,10 +981,17 @@ socket.on('camera-changed', data => {
   const card = document.getElementById(`remote-${sid}`);
   if (card) {
     if (!enabled) {
-      // show a simple overlay by reducing opacity
-      card.style.opacity = '0.25';
+      const placeholder = card.querySelector('.remote-video-placeholder');
+      if (placeholder) {
+        placeholder.textContent = 'Camera off';
+        placeholder.hidden = false;
+      }
     } else {
-      card.style.opacity = '1';
+      const placeholder = card.querySelector('.remote-video-placeholder');
+      if (placeholder) {
+        placeholder.textContent = 'Connecting to video…';
+        placeholder.hidden = false;
+      }
     }
   }
 });
@@ -944,10 +1024,6 @@ socket.on('peer-left', data => {
   if (roomId && data.room_id && data.room_id !== roomId) return;
   const sid = data.sid;
   if (!sid) return;
-  if (peerConnections[sid]) {
-    try { peerConnections[sid].close(); } catch (e) {}
-    delete peerConnections[sid];
-  }
   removeRemoteVideo(sid);
   if (data.username) {
     showToast(`${data.username} left the call.`, 'info');
@@ -987,7 +1063,7 @@ function appendCaption(username, text, confidence, created_at) {
   const capEl = document.getElementById('captionHistory');
   if (!capEl) return;
   // Render captions as a continuous inline stream.
-  const remoteCount = (document.getElementById('remotesContainer')?.querySelectorAll('.remote-card') || []).length;
+  const remoteCount = (document.getElementById('remotesContainer')?.querySelectorAll('.remote-peer') || []).length;
   const onlyLocal = remoteCount === 0;
   let stream = document.getElementById('captionStream');
   if (!stream) {

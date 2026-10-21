@@ -487,20 +487,31 @@ def api_admin_stats():
 @require_admin
 def api_admin_add_sample():
     data = request.get_json(force=True) or {}
-    label = (data.get("label") or "").strip().lower().replace(" ", "_")
+    # Keep spaces exactly as entered; only normalize surrounding whitespace and case.
+    label = (data.get("label") or "").strip().lower()
     image_b64 = data.get("image")
+    raw_features = data.get("features")
 
-    if not label or not image_b64:
-        return jsonify({"success": False, "message": "label and image are required."}), 400
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", label):
-        return jsonify({"success": False, "message": "Use 1–40 lowercase letters, numbers, _ or - for the sign label."}), 400
-    if len(image_b64) > 1_500_000:
-        return jsonify({"success": False, "message": "Image is too large. Please capture another frame."}), 413
-
-    frame = decode_frame(image_b64)
-    feat = get_hand_features(frame)
-    if feat is None:
-        return jsonify({"success": False, "message": "No hand detected in frame. Try again."}), 422
+    if not label or (not image_b64 and raw_features is None):
+        return jsonify({"success": False, "message": "label and hand features are required."}), 400
+    if not re.fullmatch(r"[a-z0-9][a-z0-9 _-]{0,39}", label):
+        return jsonify({"success": False, "message": "Use 1–40 lowercase letters, numbers, spaces, _ or - for the sign label."}), 400
+    if raw_features is not None:
+        try:
+            feat = np.asarray(raw_features, dtype=np.float32).reshape(-1)
+            if feat.size != 126 or not np.all(np.isfinite(feat)) or not np.any(feat):
+                raise ValueError("invalid feature vector")
+            feat = normalize_feature_vector(feat)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "No valid hand landmarks found. Keep your hand in frame and try again."}), 422
+    else:
+        if len(image_b64) > 1_500_000:
+            return jsonify({"success": False, "message": "Image is too large. Please capture another frame."}), 413
+        if not USE_SERVER_MEDIAPIPE or hands_detector is None:
+            return jsonify({"success": False, "message": "Hand tracking is unavailable. Refresh the admin page and try again."}), 503
+        feat = get_hand_features(decode_frame(image_b64))
+        if feat is None:
+            return jsonify({"success": False, "message": "No hand detected in frame. Try again."}), 422
 
     # Prevent a held burst button from filling the dataset with near-identical
     # frames. A varied set trains substantially better than duplicated frames.
@@ -522,7 +533,7 @@ def api_admin_sample_stats():
 @require_admin
 def api_admin_delete_samples(label):
     label = label.strip().lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", label):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9 _-]{0,39}", label):
         return jsonify({"success": False, "message": "Invalid sign label."}), 400
     deleted_samples = db.delete_samples_by_label(label)
     return jsonify({
@@ -876,7 +887,7 @@ def on_join_room(data):
                            "room_owner": room_members[room_id].get(room_owners.get(room_id), username),
                            "room_owner_sid": room_owners.get(room_id),
                            "participants": list(room_members[room_id].values()),
-                           "screen_sharers": list(room_screen_sharers.get(room_id, set()))}, room=room_id)
+                           "screen_sharers": list(room_screen_sharers.get(room_id, set()))}, room=request.sid)
     # notify other participants that someone joined
     emit('peer-joined', {'sid': request.sid, 'username': username, 'room_id': room_id}, room=room_id, include_self=False)
 

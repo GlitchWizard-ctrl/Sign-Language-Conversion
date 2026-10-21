@@ -92,47 +92,29 @@
                 </div>
             </section>
 
-            <section class="video-grid">
-                <div class="glass-panel video-card">
-                    <div class="panel-header panel-header-flex">
-                        <div>
-                            <h3>Your video</h3>
-                            <p>Local camera feed with sign detection overlay.</p>
-                        </div>
-                        <div class="badge-pill">Local</div>
-                    </div>
-                    <div class="camera-card" id="localCameraCard">
-                        <video id="localVideo" autoplay muted playsinline></video>
-                        <canvas id="localOverlay"></canvas>
-                        <div class="camera-mute" id="localCameraHint">Camera off</div>
-                        <div class="local-overlay-controls" style="position:absolute; right:12px; bottom:12px; display:flex; gap:8px;">
-                            <button id="overlayToggleCamLocal" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
-                            <button id="overlayToggleMicLocal" class="overlay-btn" title="Toggle microphone"><i class="fa-solid fa-microphone"></i></button>
-                            <button id="screenShareBtn" class="overlay-btn" title="Share your screen"><i class="fa-solid fa-display"></i></button>
-                            <button id="chatToggleBtn" class="overlay-btn" title="Open meeting chat"><i class="fa-solid fa-comment-dots"></i></button>
-                            <button id="overlayInterpreterBtnLocal" class="overlay-btn" title="Toggle converter"><i class="fa-solid fa-wave-square"></i></button>
-                            <button id="overlayFullscreenBtnLocal" class="overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
-                            <button id="overlayEndCallBtnLocal" class="overlay-btn danger" title="Leave call"><i class="fa-solid fa-phone-slash"></i></button>
+            <section class="video-grid" id="meetingStage">
+                <div id="remotesContainer" class="remotes-container">
+                    <div id="localParticipantTile" class="remote-card local-participant">
+                        <div class="camera-card" id="localCameraCard">
+                            <video id="localVideo" autoplay muted playsinline></video>
+                            <canvas id="localOverlay"></canvas>
+                            <div class="camera-mute" id="localCameraHint">Camera off</div>
+                            <div class="local-overlay-controls" style="position:absolute; right:12px; bottom:12px; display:flex; gap:8px;">
+                                <button id="overlayToggleCamLocal" class="overlay-btn" title="Toggle camera"><i class="fa-solid fa-video"></i></button>
+                                <button id="overlayToggleMicLocal" class="overlay-btn" title="Toggle microphone"><i class="fa-solid fa-microphone"></i></button>
+                                <button id="screenShareBtn" class="overlay-btn" title="Share your screen"><i class="fa-solid fa-display"></i></button>
+                                <button id="chatToggleBtn" class="overlay-btn" title="Open meeting chat"><i class="fa-solid fa-comment-dots"></i></button>
+                                <button id="overlayInterpreterBtnLocal" class="overlay-btn" title="Toggle converter"><i class="fa-solid fa-wave-square"></i></button>
+                                <button id="overlayFullscreenBtnLocal" class="overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+                                <button id="overlayEndCallBtnLocal" class="overlay-btn danger" title="Leave call"><i class="fa-solid fa-phone-slash"></i></button>
+                            </div>
+                            <div id="localVideoName" class="local-video-name">You</div>
                         </div>
                     </div>
-                    <div id="localVideoName" class="local-video-name">You</div>
+                    <div class="remote-placeholder" id="remoteOverlay">Waiting for participant...</div>
                 </div>
-                <div class="glass-panel video-card">
-                    <div class="panel-header panel-header-flex">
-                        <div>
-                            <h3>Remote feed</h3>
-                            <p>Other participant's stream.</p>
-                        </div>
-                        <div class="badge-pill">Remote</div>
-                    </div>
-                    <div id="remoteCard" class="camera-card">
-                        <div id="remotesContainer" class="remotes-container">
-                            <div class="remote-placeholder" id="remoteOverlay">Waiting for participant...</div>
-                        </div>
-                        <div id="interpretationOverlay" class="interpret-overlay" style="display:none"></div>
-                        <button id="overlayFullscreenBtn" class="remote-fullscreen-btn overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
-                    </div>
-                </div>
+                <div id="interpretationOverlay" class="interpret-overlay" style="display:none"></div>
+                <button id="overlayFullscreenBtn" class="remote-fullscreen-btn overlay-btn" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
             </section>
 
             <section class="glass-panel meeting-chat" id="meetingChat" hidden>

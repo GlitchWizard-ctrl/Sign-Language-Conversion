@@ -6,6 +6,7 @@ torch
 numpy<2
 scikit-learn==1.9.0
 opencv-python
+mediapipe==0.10.21
 gunicorn
 torchvision
 SpeechRecognition
