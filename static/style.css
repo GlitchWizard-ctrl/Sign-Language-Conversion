@@ -1201,6 +1201,14 @@ body.in-call .video-grid { display: block; }
     min-height: 0;
     aspect-ratio: auto;
 }
+.remotes-container.single-participant {
+    place-items: center;
+}
+.remotes-container.single-participant > #localParticipantTile {
+    width: min(680px, 88%);
+    height: auto;
+    aspect-ratio: 4 / 3;
+}
 .local-participant > .camera-card {
     position: absolute;
     inset: 0;

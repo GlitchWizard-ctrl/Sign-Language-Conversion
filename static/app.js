@@ -678,7 +678,8 @@ function clearRemoteWaitTimer() {
 }
 
 function updateVideoLayout(singleLocal) {
-  document.body.classList.remove('single-local');
+  const container = document.getElementById('remotesContainer');
+  container?.classList.toggle('single-participant', singleLocal);
 }
 
 // Support older server event name 'existing-peers' used by some join flows
